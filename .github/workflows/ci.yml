@@ -1,0 +1,33 @@
+name: ci
+
+# Secretless build/vet/test on every push and PR. The provider's acceptance
+# tests (TestAcc*) self-skip without TF_ACC, so `go test ./...` here runs only
+# the unit tests and needs no Google Workspace credentials. This replaces the
+# archived upstream's Vault-backed acceptance CI, which depended on secrets this
+# fork does not carry.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-vet-test:
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: go build -trimpath ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Test (unit; acceptance tests self-skip without TF_ACC)
+        run: go test ./...
