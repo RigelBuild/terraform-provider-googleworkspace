@@ -128,36 +128,13 @@ func resourceGroupCreate(ctx context.Context, d *schema.ResourceData, meta inter
 		return diag.FromErr(err)
 	}
 
-	// The etag changes with each insert, so we want to monitor how many changes we should see
-	// when we're checking for eventual consistency
-	numInserts := 1
-
 	d.SetId(group.Id)
 
-	aliases := d.Get("aliases.#").(int)
-
-	if aliases > 0 {
-		aliasesService, diags := GetGroupAliasService(groupsService)
-		if diags.HasError() {
-			return diags
-		}
-
-		for i := 0; i < aliases; i++ {
-			aliasObj := directory.Alias{
-				Alias: d.Get(fmt.Sprintf("aliases.%d", i)).(string),
-			}
-
-			_, err := aliasesService.Insert(d.Id(), &aliasObj).Do()
-			if err != nil {
-				return diag.FromErr(err)
-			}
-			numInserts += 1
-		}
-	}
-
-	// INSERT will respond with the Group that will be created, however, it is eventually consistent
-	// After INSERT, the etag is updated along with the Group (and any aliases),
-	// once we get a consistent etag, we can feel confident that our Group is also consistent
+	// INSERT will respond with the Group that will be created, however, it is eventually consistent.
+	// After INSERT, the etag is updated along with the Group, and once we get a consistent etag we can
+	// feel confident that our Group is also consistent. We wait for the GROUP to be consistent BEFORE
+	// inserting any aliases: inserting an alias against a not-yet-propagated group 403s (the create-time
+	// alias race). numInserts is a literal 1 here — the group alone.
 	cc := consistencyCheck{
 		resourceType: "group",
 		timeout:      d.Timeout(schema.TimeoutCreate),
@@ -165,7 +142,7 @@ func resourceGroupCreate(ctx context.Context, d *schema.ResourceData, meta inter
 	err = retryTimeDuration(ctx, d.Timeout(schema.TimeoutCreate), func() error {
 		var retryErr error
 
-		if cc.reachedConsistency(numInserts) {
+		if cc.reachedConsistency(1) {
 			return nil
 		}
 
@@ -186,6 +163,64 @@ func resourceGroupCreate(ctx context.Context, d *schema.ResourceData, meta inter
 
 	if err != nil {
 		return diag.FromErr(err)
+	}
+
+	// Now that the group is consistent, insert any aliases and wait for THEM to be consistent.
+	aliases := d.Get("aliases.#").(int)
+
+	if aliases > 0 {
+		aliasesService, diags := GetGroupAliasService(groupsService)
+		if diags.HasError() {
+			return diags
+		}
+
+		aliasInserts := 0
+		for i := 0; i < aliases; i++ {
+			aliasObj := directory.Alias{
+				Alias: d.Get(fmt.Sprintf("aliases.%d", i)).(string),
+			}
+
+			_, err := aliasesService.Insert(d.Id(), &aliasObj).Do()
+			if err != nil {
+				return diag.FromErr(err)
+			}
+			aliasInserts += 1
+		}
+
+		// The alias inserts are also eventually consistent. This MUST use a FRESH consistencyCheck:
+		// reusing the group wait's cc leaves currConsistent==numConsistent, so
+		// reachedConsistency(aliasInserts) would return true on the very first poll and the second
+		// wait becomes a silent no-op — the race survives. A fresh cc with numInserts = the alias
+		// count is what makes this wait real. It lives inside `if aliases > 0` so alias-less groups
+		// pay zero extra polls.
+		aliasCC := consistencyCheck{
+			resourceType: "group",
+			timeout:      d.Timeout(schema.TimeoutCreate),
+		}
+		err = retryTimeDuration(ctx, d.Timeout(schema.TimeoutCreate), func() error {
+			var retryErr error
+
+			if aliasCC.reachedConsistency(aliasInserts) {
+				return nil
+			}
+
+			newGroup, retryErr := groupsService.Get(d.Id()).IfNoneMatch(aliasCC.lastEtag).Do()
+			if googleapi.IsNotModified(retryErr) {
+				aliasCC.currConsistent += 1
+			} else if isNotFound(retryErr) {
+				aliasCC.currConsistent = 0
+			} else if retryErr != nil {
+				return fmt.Errorf("unexpected error during retries of %s: %s", aliasCC.resourceType, retryErr)
+			} else {
+				aliasCC.handleNewEtag(newGroup.Etag)
+			}
+
+			return fmt.Errorf("timed out while waiting for %s aliases to be inserted", aliasCC.resourceType)
+		})
+
+		if err != nil {
+			return diag.FromErr(err)
+		}
 	}
 
 	log.Printf("[DEBUG] Finished creating Group %q: %#v", d.Id(), email)
