@@ -16,7 +16,11 @@ permissions:
   contents: read
 
 jobs:
+  # Job name `CI` is the check-run context the monorepo's github-IaC pins as this
+  # fork's required status check on `main` (parallel to our other owned repos'
+  # `CI` gate). Renaming it renames that context — keep them in lockstep.
   build-vet-test:
+    name: CI
     runs-on: ubuntu-latest
     env:
       CGO_ENABLED: "0"
