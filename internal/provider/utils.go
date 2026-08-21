@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/errwrap"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 
 	"github.com/mitchellh/go-homedir"
 
@@ -206,4 +207,19 @@ func isEmail(input string) bool {
 		return false
 	}
 	return true
+}
+
+// emptyOrStringInSlice builds a StringInSlice validator that also accepts the
+// empty string. The Directory API returns nested objects (emails,
+// organizations, phones, …) whose optional `type` is absent; the Go client
+// materializes an absent enum as "", and a bare StringInSlice(enum, false)
+// rejects "" — so importing a real user with an untyped email/org/phone entry
+// fails on valid data. Allowing "" fixes that without weakening writes: the
+// write path (expandInterfaceObjects) already drops "" fields before the API
+// call, and Google enforces the enum server-side, so a genuinely wrong authored
+// value is still rejected. Non-empty values are validated against `valid`.
+// Returns a SchemaValidateFunc so callers keep their existing
+// validation.ToDiagFunc(...) wrapper unchanged.
+func emptyOrStringInSlice(valid []string) schema.SchemaValidateFunc {
+	return validation.StringInSlice(append([]string{""}, valid...), false)
 }

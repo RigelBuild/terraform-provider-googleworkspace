@@ -266,7 +266,7 @@ func resourceUser() *schema.Resource {
 							Type:     schema.TypeString,
 							Required: true,
 							ValidateDiagFunc: validation.ToDiagFunc(
-								validation.StringInSlice([]string{"custom", "home", "other", "work"}, false),
+								emptyOrStringInSlice([]string{"custom", "home", "other", "work"}),
 							),
 						},
 					},
@@ -293,8 +293,8 @@ func resourceUser() *schema.Resource {
 							Type:     schema.TypeString,
 							Required: true,
 							ValidateDiagFunc: validation.ToDiagFunc(
-								validation.StringInSlice([]string{"account", "custom", "customer", "login_id",
-									"network", "organization"}, false),
+								emptyOrStringInSlice([]string{"account", "custom", "customer", "login_id",
+									"network", "organization"}),
 							),
 						},
 						"value": {
@@ -329,10 +329,10 @@ func resourceUser() *schema.Resource {
 							Type:     schema.TypeString,
 							Required: true,
 							ValidateDiagFunc: validation.ToDiagFunc(
-								validation.StringInSlice([]string{"admin_assistant", "assistant", "brother", "child",
+								emptyOrStringInSlice([]string{"admin_assistant", "assistant", "brother", "child",
 									"custom", "domestic_partner", "dotted_line_manager", "exec_assistant", "father",
 									"friend", "manager", "mother", "parent", "partner", "referred_by", "relative",
-									"sister"}, false),
+									"sister"}),
 							),
 						},
 						"value": {
@@ -444,7 +444,7 @@ func resourceUser() *schema.Resource {
 							Type:     schema.TypeString,
 							Required: true,
 							ValidateDiagFunc: validation.ToDiagFunc(
-								validation.StringInSlice([]string{"custom", "home", "other", "work"}, false),
+								emptyOrStringInSlice([]string{"custom", "home", "other", "work"}),
 							),
 						},
 					},
@@ -522,7 +522,7 @@ func resourceUser() *schema.Resource {
 							Type:     schema.TypeString,
 							Required: true,
 							ValidateDiagFunc: validation.ToDiagFunc(
-								validation.StringInSlice([]string{"domain_only", "school", "unknown", "work"}, false),
+								emptyOrStringInSlice([]string{"domain_only", "school", "unknown", "work"}),
 							),
 						},
 					},
@@ -564,10 +564,10 @@ func resourceUser() *schema.Resource {
 							Type:     schema.TypeString,
 							Required: true,
 							ValidateDiagFunc: validation.ToDiagFunc(
-								validation.StringInSlice([]string{"assistant", "callback", "car", "company_main",
+								emptyOrStringInSlice([]string{"assistant", "callback", "car", "company_main",
 									"custom", "grand_central", "home", "home_fax", "isdn", "main", "mobile", "other",
 									"other_fax", "pager", "radio", "telex", "tty_tdd", "work", "work_fax",
-									"work_mobile", "work_pager"}, false),
+									"work_mobile", "work_pager"}),
 							),
 						},
 						"value": {
@@ -661,7 +661,7 @@ func resourceUser() *schema.Resource {
 							Type:     schema.TypeString,
 							Optional: true,
 							ValidateDiagFunc: validation.ToDiagFunc(
-								validation.StringInSlice([]string{"linux", "unspecified", "windows"}, false),
+								emptyOrStringInSlice([]string{"linux", "unspecified", "windows"}),
 							),
 						},
 						"primary": {
@@ -761,9 +761,8 @@ func resourceUser() *schema.Resource {
 							Type:     schema.TypeString,
 							Required: true,
 							ValidateDiagFunc: validation.ToDiagFunc(
-								validation.StringInSlice([]string{"app_install_page", "blog", "custom", "ftp",
-									"home", "home_page", "other", "profile", "reservations", "resume", "work"},
-									false),
+								emptyOrStringInSlice([]string{"app_install_page", "blog", "custom", "ftp",
+									"home", "home_page", "other", "profile", "reservations", "resume", "work"}),
 							),
 						},
 						"value": {
@@ -821,8 +820,7 @@ func resourceUser() *schema.Resource {
 							Type:     schema.TypeString,
 							Required: true,
 							ValidateDiagFunc: validation.ToDiagFunc(
-								validation.StringInSlice([]string{"custom", "default", "desk"},
-									false),
+								emptyOrStringInSlice([]string{"custom", "default", "desk"}),
 							),
 						},
 					},
@@ -857,8 +855,7 @@ func resourceUser() *schema.Resource {
 							Type:     schema.TypeString,
 							Required: true,
 							ValidateDiagFunc: validation.ToDiagFunc(
-								validation.StringInSlice([]string{"custom", "mission", "occupation", "outlook"},
-									false),
+								emptyOrStringInSlice([]string{"custom", "mission", "occupation", "outlook"}),
 							),
 						},
 						"value": {
@@ -922,8 +919,8 @@ func resourceUser() *schema.Resource {
 							Type:     schema.TypeString,
 							Required: true,
 							ValidateDiagFunc: validation.ToDiagFunc(
-								validation.StringInSlice([]string{"aim", "custom_protocol", "gtalk", "icq",
-									"jabber", "msn", "net_meeting", "qq", "skype", "yahoo"}, false),
+								emptyOrStringInSlice([]string{"aim", "custom_protocol", "gtalk", "icq",
+									"jabber", "msn", "net_meeting", "qq", "skype", "yahoo"}),
 							),
 						},
 						"type": {
@@ -931,7 +928,7 @@ func resourceUser() *schema.Resource {
 							Type:        schema.TypeString,
 							Required:    true,
 							ValidateDiagFunc: validation.ToDiagFunc(
-								validation.StringInSlice([]string{"custom", "home", "other", "work"}, false),
+								emptyOrStringInSlice([]string{"custom", "home", "other", "work"}),
 							),
 						},
 					},
