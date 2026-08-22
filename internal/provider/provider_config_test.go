@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"reflect"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
@@ -273,4 +274,41 @@ func checkValidCredsGroupAdmin(config *apiClient) diag.Diagnostics {
 	}
 
 	return diags
+}
+
+func TestImpersonationClientPreservesAccessTokenAuth(t *testing.T) {
+	base := &apiClient{
+		AccessToken:           "base-access-token",
+		Credentials:           `{"type":"service_account"}`,
+		ServiceAccount:        "sa@project.iam.gserviceaccount.com",
+		ClientScopes:          []string{"scope-a", "scope-b"},
+		Customer:              "C0abc",
+		UserAgent:             "ua/1.0",
+		ImpersonatedUserEmail: "admin@example.com",
+	}
+	got := base.impersonationClient("mailbox@example.com")
+	// The two fields the bug dropped — both REQUIRED for the access-token
+	// impersonation path in loadAndValidate.
+	if got.AccessToken != base.AccessToken {
+		t.Errorf("AccessToken not carried: got %q", got.AccessToken)
+	}
+	if got.ServiceAccount != base.ServiceAccount {
+		t.Errorf("ServiceAccount not carried: got %q", got.ServiceAccount)
+	}
+	// Credentials selects the key-file impersonation auth mode; carrying it
+	// guards the same class of bug one field over.
+	if got.Credentials != base.Credentials {
+		t.Errorf("Credentials not carried: got %q", got.Credentials)
+	}
+	// The subject must be the target mailbox, not the base admin.
+	if got.ImpersonatedUserEmail != "mailbox@example.com" {
+		t.Errorf("ImpersonatedUserEmail: got %q want mailbox@example.com", got.ImpersonatedUserEmail)
+	}
+	// And the other carried inputs are preserved.
+	if got.Customer != base.Customer || got.UserAgent != base.UserAgent {
+		t.Errorf("Customer/UserAgent not preserved")
+	}
+	if !reflect.DeepEqual(got.ClientScopes, base.ClientScopes) {
+		t.Errorf("ClientScopes not carried: got %v want %v", got.ClientScopes, base.ClientScopes)
+	}
 }

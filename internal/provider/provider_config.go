@@ -186,6 +186,23 @@ func (c *apiClient) NewDirectoryService() (*directory.Service, diag.Diagnostics)
 
 	return directoryService, diags
 }
+
+// impersonationClient returns a copy of the client configured to impersonate
+// userId, preserving the caller's authentication inputs. Every field that
+// loadAndValidate reads to choose an auth path must be carried, or the copy
+// silently falls back to application default credentials.
+func (c *apiClient) impersonationClient(userId string) *apiClient {
+	return &apiClient{
+		AccessToken:           c.AccessToken,
+		ClientScopes:          c.ClientScopes,
+		Credentials:           c.Credentials,
+		Customer:              c.Customer,
+		ServiceAccount:        c.ServiceAccount,
+		UserAgent:             c.UserAgent,
+		ImpersonatedUserEmail: userId,
+	}
+}
+
 func (c *apiClient) NewGmailService(ctx context.Context, userId string) (*gmail.Service, diag.Diagnostics) {
 	var diags diag.Diagnostics
 
@@ -194,13 +211,7 @@ func (c *apiClient) NewGmailService(ctx context.Context, userId string) (*gmail.
 	// the send-as-alias resource requires the oauth token impersonate the user
 	// the alias is being created for.
 	log.Printf("[INFO] Creating Google Admin Gmail client that impersonates %q", userId)
-	newClient := &apiClient{
-		Credentials:           c.Credentials,
-		ClientScopes:          c.ClientScopes,
-		Customer:              c.Customer,
-		UserAgent:             c.UserAgent,
-		ImpersonatedUserEmail: userId,
-	}
+	newClient := c.impersonationClient(userId)
 	diags = newClient.loadAndValidate(ctx)
 	if diags.HasError() {
 		return nil, diags
