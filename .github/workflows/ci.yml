@@ -4,7 +4,7 @@ name: ci
 # tests (TestAcc*) self-skip without TF_ACC, so `go test ./...` here runs only
 # the unit tests and needs no Google Workspace credentials. This replaces the
 # archived upstream's Vault-backed acceptance CI, which depended on secrets this
-# fork does not carry.
+# repo does not carry.
 
 on:
   push:
@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   # Job name `CI` is the check-run context the monorepo's github-IaC pins as this
-  # fork's required status check on `main` (parallel to our other owned repos'
+  # repo's required status check on `main` (parallel to our other owned repos'
   # `CI` gate). Renaming it renames that context — keep them in lockstep.
   build-vet-test:
     name: CI
