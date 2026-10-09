@@ -82,7 +82,7 @@ func resourceChromePolicyCreate(ctx context.Context, d *schema.ResourceData, met
 
 	log.Printf("[DEBUG] Creating Chrome Policy for org:%s", orgUnitId)
 
-	policyTargetKey := &chromepolicy.GoogleChromePolicyV1PolicyTargetKey{
+	policyTargetKey := &chromepolicy.GoogleChromePolicyVersionsV1PolicyTargetKey{
 		TargetResource: "orgunits/" + orgUnitId,
 	}
 
@@ -96,7 +96,7 @@ func resourceChromePolicyCreate(ctx context.Context, d *schema.ResourceData, met
 		return diags
 	}
 
-	var requests []*chromepolicy.GoogleChromePolicyV1ModifyOrgUnitPolicyRequest
+	var requests []*chromepolicy.GoogleChromePolicyVersionsV1ModifyOrgUnitPolicyRequest
 	for _, p := range policies {
 		var keys []string
 		var schemaValues map[string]interface{}
@@ -106,7 +106,7 @@ func resourceChromePolicyCreate(ctx context.Context, d *schema.ResourceData, met
 		for key := range schemaValues {
 			keys = append(keys, key)
 		}
-		requests = append(requests, &chromepolicy.GoogleChromePolicyV1ModifyOrgUnitPolicyRequest{
+		requests = append(requests, &chromepolicy.GoogleChromePolicyVersionsV1ModifyOrgUnitPolicyRequest{
 			PolicyTargetKey: policyTargetKey,
 			PolicyValue:     p,
 			UpdateMask:      strings.Join(keys, ","),
@@ -114,7 +114,7 @@ func resourceChromePolicyCreate(ctx context.Context, d *schema.ResourceData, met
 	}
 
 	err := retryTimeDuration(ctx, time.Minute, func() error {
-		_, retryErr := chromePoliciesService.Orgunits.BatchModify(fmt.Sprintf("customers/%s", client.Customer), &chromepolicy.GoogleChromePolicyV1BatchModifyOrgUnitPoliciesRequest{Requests: requests}).Do()
+		_, retryErr := chromePoliciesService.Orgunits.BatchModify(fmt.Sprintf("customers/%s", client.Customer), &chromepolicy.GoogleChromePolicyVersionsV1BatchModifyOrgUnitPoliciesRequest{Requests: requests}).Do()
 		return retryErr
 	})
 
@@ -143,26 +143,26 @@ func resourceChromePolicyUpdate(ctx context.Context, d *schema.ResourceData, met
 
 	log.Printf("[DEBUG] Updating Chrome Policy for org:%s", d.Id())
 
-	policyTargetKey := &chromepolicy.GoogleChromePolicyV1PolicyTargetKey{
+	policyTargetKey := &chromepolicy.GoogleChromePolicyVersionsV1PolicyTargetKey{
 		TargetResource: "orgunits/" + d.Id(),
 	}
 
 	// Update is achieved by inheriting defaults for the previous policySchemas, and then applying the new set
 	old, _ := d.GetChange("policies")
 
-	var requests []*chromepolicy.GoogleChromePolicyV1InheritOrgUnitPolicyRequest
+	var requests []*chromepolicy.GoogleChromePolicyVersionsV1InheritOrgUnitPolicyRequest
 	for _, p := range old.([]interface{}) {
 		policy := p.(map[string]interface{})
 		schemaName := policy["schema_name"].(string)
 
-		requests = append(requests, &chromepolicy.GoogleChromePolicyV1InheritOrgUnitPolicyRequest{
+		requests = append(requests, &chromepolicy.GoogleChromePolicyVersionsV1InheritOrgUnitPolicyRequest{
 			PolicyTargetKey: policyTargetKey,
 			PolicySchema:    schemaName,
 		})
 	}
 
 	err := retryTimeDuration(ctx, time.Minute, func() error {
-		_, retryErr := chromePoliciesService.Orgunits.BatchInherit(fmt.Sprintf("customers/%s", client.Customer), &chromepolicy.GoogleChromePolicyV1BatchInheritOrgUnitPoliciesRequest{Requests: requests}).Do()
+		_, retryErr := chromePoliciesService.Orgunits.BatchInherit(fmt.Sprintf("customers/%s", client.Customer), &chromepolicy.GoogleChromePolicyVersionsV1BatchInheritOrgUnitPoliciesRequest{Requests: requests}).Do()
 		return retryErr
 	})
 
@@ -196,21 +196,21 @@ func resourceChromePolicyRead(ctx context.Context, d *schema.ResourceData, meta 
 
 	log.Printf("[DEBUG] Getting Chrome Policy for org:%s", d.Id())
 
-	policyTargetKey := &chromepolicy.GoogleChromePolicyV1PolicyTargetKey{
+	policyTargetKey := &chromepolicy.GoogleChromePolicyVersionsV1PolicyTargetKey{
 		TargetResource: "orgunits/" + d.Id(),
 	}
 
-	policiesObj := []*chromepolicy.GoogleChromePolicyV1PolicyValue{}
+	policiesObj := []*chromepolicy.GoogleChromePolicyVersionsV1PolicyValue{}
 	for _, p := range d.Get("policies").([]interface{}) {
 		policy := p.(map[string]interface{})
 		schemaName := policy["schema_name"].(string)
 
-		var resp *chromepolicy.GoogleChromePolicyV1ResolveResponse
+		var resp *chromepolicy.GoogleChromePolicyVersionsV1ResolveResponse
 		err := retryTimeDuration(ctx, time.Minute, func() error {
 			var retryErr error
 
 			// we will resolve each individual policySchema by fully qualified name, so the responses should be a single result
-			resp, retryErr = chromePoliciesService.Resolve(fmt.Sprintf("customers/%s", client.Customer), &chromepolicy.GoogleChromePolicyV1ResolveRequest{
+			resp, retryErr = chromePoliciesService.Resolve(fmt.Sprintf("customers/%s", client.Customer), &chromepolicy.GoogleChromePolicyVersionsV1ResolveRequest{
 				PolicySchemaFilter: schemaName,
 				PolicyTargetKey:    policyTargetKey,
 			}).Do()
@@ -258,23 +258,23 @@ func resourceChromePolicyDelete(ctx context.Context, d *schema.ResourceData, met
 
 	log.Printf("[DEBUG] Deleting Chrome Policy for org:%s", d.Id())
 
-	policyTargetKey := &chromepolicy.GoogleChromePolicyV1PolicyTargetKey{
+	policyTargetKey := &chromepolicy.GoogleChromePolicyVersionsV1PolicyTargetKey{
 		TargetResource: "orgunits/" + d.Id(),
 	}
 
-	var requests []*chromepolicy.GoogleChromePolicyV1InheritOrgUnitPolicyRequest
+	var requests []*chromepolicy.GoogleChromePolicyVersionsV1InheritOrgUnitPolicyRequest
 	for _, p := range d.Get("policies").([]interface{}) {
 		policy := p.(map[string]interface{})
 		schemaName := policy["schema_name"].(string)
 
-		requests = append(requests, &chromepolicy.GoogleChromePolicyV1InheritOrgUnitPolicyRequest{
+		requests = append(requests, &chromepolicy.GoogleChromePolicyVersionsV1InheritOrgUnitPolicyRequest{
 			PolicyTargetKey: policyTargetKey,
 			PolicySchema:    schemaName,
 		})
 	}
 
 	err := retryTimeDuration(ctx, time.Minute, func() error {
-		_, retryErr := chromePoliciesService.Orgunits.BatchInherit(fmt.Sprintf("customers/%s", client.Customer), &chromepolicy.GoogleChromePolicyV1BatchInheritOrgUnitPoliciesRequest{Requests: requests}).Do()
+		_, retryErr := chromePoliciesService.Orgunits.BatchInherit(fmt.Sprintf("customers/%s", client.Customer), &chromepolicy.GoogleChromePolicyVersionsV1BatchInheritOrgUnitPoliciesRequest{Requests: requests}).Do()
 		return retryErr
 	})
 
@@ -307,7 +307,7 @@ func validateChromePolicies(ctx context.Context, d *schema.ResourceData, client 
 	for _, policy := range new.([]interface{}) {
 		schemaName := policy.(map[string]interface{})["schema_name"].(string)
 
-		var schemaDef *chromepolicy.GoogleChromePolicyV1PolicySchema
+		var schemaDef *chromepolicy.GoogleChromePolicyVersionsV1PolicySchema
 		err := retryTimeDuration(ctx, time.Minute, func() error {
 			var retryErr error
 
@@ -474,9 +474,9 @@ func convertPolicyFieldValueType(fieldType string, fieldValue interface{}) (inte
 	return value, err
 }
 
-func expandChromePoliciesValues(policies []interface{}) ([]*chromepolicy.GoogleChromePolicyV1PolicyValue, diag.Diagnostics) {
+func expandChromePoliciesValues(policies []interface{}) ([]*chromepolicy.GoogleChromePolicyVersionsV1PolicyValue, diag.Diagnostics) {
 	var diags diag.Diagnostics
-	result := []*chromepolicy.GoogleChromePolicyV1PolicyValue{}
+	result := []*chromepolicy.GoogleChromePolicyVersionsV1PolicyValue{}
 
 	for _, p := range policies {
 		policy := p.(map[string]interface{})
@@ -502,7 +502,7 @@ func expandChromePoliciesValues(policies []interface{}) ([]*chromepolicy.GoogleC
 			return nil, diag.FromErr(err)
 		}
 
-		policyObj := chromepolicy.GoogleChromePolicyV1PolicyValue{
+		policyObj := chromepolicy.GoogleChromePolicyVersionsV1PolicyValue{
 			PolicySchema: schemaName,
 			Value:        schemaValuesJson,
 		}
@@ -513,7 +513,7 @@ func expandChromePoliciesValues(policies []interface{}) ([]*chromepolicy.GoogleC
 	return result, diags
 }
 
-func flattenChromePolicies(ctx context.Context, policiesObj []*chromepolicy.GoogleChromePolicyV1PolicyValue, client *apiClient) ([]map[string]interface{}, diag.Diagnostics) {
+func flattenChromePolicies(ctx context.Context, policiesObj []*chromepolicy.GoogleChromePolicyVersionsV1PolicyValue, client *apiClient) ([]map[string]interface{}, diag.Diagnostics) {
 	var policies []map[string]interface{}
 
 	chromePolicyService, diags := client.NewChromePolicyService()
@@ -527,7 +527,7 @@ func flattenChromePolicies(ctx context.Context, policiesObj []*chromepolicy.Goog
 	}
 
 	for _, polObj := range policiesObj {
-		var schemaDef *chromepolicy.GoogleChromePolicyV1PolicySchema
+		var schemaDef *chromepolicy.GoogleChromePolicyVersionsV1PolicySchema
 		err := retryTimeDuration(ctx, time.Minute, func() error {
 			var retryErr error
 
