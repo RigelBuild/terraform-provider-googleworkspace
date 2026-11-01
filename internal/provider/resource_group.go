@@ -375,10 +375,11 @@ func resourceGroupUpdate(ctx context.Context, d *schema.ResourceData, meta inter
 		}
 	}
 
-	if err := waitForGroupAddresses(ctx, groupsService, d.Id(), d.Timeout(schema.TimeoutUpdate), groupAddressExpectation{
-		present: newAliases,
-		absent:  toDelete,
-	}); err != nil {
+	expectation := groupAddressExpectation{}
+	if emailChanged || aliasesChanged {
+		expectation = groupAddressExpectation{present: newAliases, absent: toDelete}
+	}
+	if err := waitForGroupAddresses(ctx, groupsService, d.Id(), d.Timeout(schema.TimeoutUpdate), expectation); err != nil {
 		return diag.FromErr(err)
 	}
 

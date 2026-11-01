@@ -30,9 +30,9 @@ func TestIsNotConsistent_other(t *testing.T) {
 }
 
 func TestRetryTimeDurationReturnsNonRetryableErrorAfterRetryableError(t *testing.T) {
-	previousInterval := retryPollIntervalOverride
-	retryPollIntervalOverride = time.Millisecond
-	t.Cleanup(func() { retryPollIntervalOverride = previousInterval })
+	previousMinTimeout := retryPollInterval
+	retryPollInterval = time.Millisecond
+	t.Cleanup(func() { retryPollInterval = previousMinTimeout })
 
 	retryableErr := errors.New("timed out while waiting for propagation")
 	nonRetryableErr := errors.New("permanent failure")

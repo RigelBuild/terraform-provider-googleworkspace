@@ -248,6 +248,12 @@ func (f *fakeAdmin) serveAliasInsert(w http.ResponseWriter, r *http.Request, gro
 		f.writeError(w, http.StatusBadRequest, "invalid", "invalid alias body")
 		return
 	}
+	pending := group.pendingAliasWrites[alias.Alias]
+	if alias.Alias == group.group.Email || stringInSlice(group.group.Aliases, alias.Alias) ||
+		stringInSlice(group.group.NonEditableAliases, alias.Alias) || (pending != nil && pending.present) {
+		f.writeError(w, http.StatusConflict, "duplicate", "duplicate alias")
+		return
+	}
 	if f.aliasWritesAfterReads > 0 {
 		group.pendingAliasWrites[alias.Alias] = &fakeAdminAliasWrite{
 			present:        true,
@@ -331,7 +337,7 @@ func (f *fakeAdmin) serveSettings(w http.ResponseWriter, r *http.Request, email 
 	update.EnableCollaborativeInbox = fakeAdminValue(
 		update.EnableCollaborativeInbox, settings.EnableCollaborativeInbox,
 	)
-	f.settingsEtags[email] = f.nextSettingsEtag(f.settingsEtags[email])
+	f.settings[email] = &update
 	w.Header().Set("ETag", f.settingsEtags[email])
 	f.writeJSON(w, http.StatusOK, &update)
 }

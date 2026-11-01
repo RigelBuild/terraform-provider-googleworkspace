@@ -2,57 +2,61 @@ package googleworkspace
 
 import (
 	"context"
-	"errors"
 	"log"
 	"regexp"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/errwrap"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 )
 
-var retryPollIntervalOverride time.Duration
+// retryPollInterval is zero in production, which keeps the SDK backoff; tests set it to poll fast.
+var retryPollInterval time.Duration
 
 func retryTimeDuration(ctx context.Context, duration time.Duration, retryFunc func() error) error {
-	if retryPollIntervalOverride > 0 {
-		var lastErr error
-		conf := &resource.StateChangeConf{
-			Pending:      []string{"retryableerror"},
-			Target:       []string{"success"},
-			Timeout:      duration,
-			PollInterval: retryPollIntervalOverride,
-			Refresh: func() (interface{}, string, error) {
-				err := retryFunc()
-				if err == nil {
-					return true, "success", nil
-				}
-				if IsNotConsistent(err) {
-					lastErr = err
-					return true, "retryableerror", nil
-				}
-				return nil, "", err
-			},
-		}
-		_, err := conf.WaitForStateContext(ctx)
-		if err != nil {
-			var timeoutErr *resource.TimeoutError
-			if lastErr != nil && (errors.As(err, &timeoutErr) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
-				return lastErr
+	var resultErr error
+	var resultErrMu sync.Mutex
+
+	conf := &resource.StateChangeConf{
+		Pending:      []string{"retryableerror"},
+		Target:       []string{"success"},
+		Timeout:      duration,
+		MinTimeout:   500 * time.Millisecond,
+		PollInterval: retryPollInterval,
+		Refresh: func() (interface{}, string, error) {
+			err := retryFunc()
+
+			resultErrMu.Lock()
+			defer resultErrMu.Unlock()
+
+			if err == nil {
+				resultErr = nil
+				return 42, "success", nil
 			}
-		}
-		return err
+
+			retryErr := resource.NonRetryableError(err)
+			if IsNotConsistent(err) {
+				retryErr = resource.RetryableError(err)
+			}
+			resultErr = retryErr.Err
+
+			if retryErr.Retryable {
+				return 42, "retryableerror", nil
+			}
+			return nil, "quit", retryErr.Err
+		},
 	}
 
-	return resource.RetryContext(ctx, duration, func() *resource.RetryError {
-		err := retryFunc()
-		if err == nil {
-			return nil
-		}
-		if IsNotConsistent(err) {
-			return resource.RetryableError(err)
-		}
-		return resource.NonRetryableError(err)
-	})
+	_, waitErr := conf.WaitForStateContext(ctx)
+
+	resultErrMu.Lock()
+	defer resultErrMu.Unlock()
+
+	if resultErr == nil {
+		return waitErr
+	}
+	return resultErr
 }
 
 func IsNotConsistent(err error) bool {

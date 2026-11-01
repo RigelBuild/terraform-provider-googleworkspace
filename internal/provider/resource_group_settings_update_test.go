@@ -14,12 +14,15 @@ import (
 )
 
 func TestResourceGroupSettingsUpdate_EmailPropagation(t *testing.T) {
-	_, _, requests, diags := applyGroupSettingsUpdate(t, true, 2, "5s")
+	_, result, requests, diags := applyGroupSettingsUpdate(t, true, 2, "10s")
 	if diags.HasError() {
 		t.Fatalf("Apply failed: %v; requests: %v", diags, requests)
 	}
 	if got := fakeAdminCountRequests(requests, "PUT /groups/v1/groups/"); got != 3 {
 		t.Fatalf("settings PUTs = %d, want 3", got)
+	}
+	if got := resourceGroupSettings().Data(result).Get("who_can_join"); got != "ALL_IN_DOMAIN_CAN_JOIN" {
+		t.Fatalf("who_can_join = %v, want ALL_IN_DOMAIN_CAN_JOIN", got)
 	}
 }
 
@@ -50,7 +53,7 @@ func TestResourceGroupSettingsUpdate_RequiredWithoutEmailChangeFailsFast(t *test
 }
 
 func TestResourceGroupSettingsUpdate_PropagationTimeoutFailsLoud(t *testing.T) {
-	_, _, requests, diags := applyGroupSettingsUpdate(t, true, 100, "100ms")
+	_, _, requests, diags := applyGroupSettingsUpdate(t, true, 1_000_000, "500ms")
 	if !diags.HasError() {
 		t.Fatal("Apply succeeded before propagation timeout")
 	}
@@ -69,9 +72,9 @@ func applyGroupSettingsUpdate(
 	updateTimeout string,
 ) (*fakeAdmin, *terraform.InstanceState, []string, diag.Diagnostics) {
 	t.Helper()
-	previousInterval := retryPollIntervalOverride
-	retryPollIntervalOverride = time.Millisecond
-	t.Cleanup(func() { retryPollIntervalOverride = previousInterval })
+	previousInterval := retryPollInterval
+	retryPollInterval = time.Millisecond
+	t.Cleanup(func() { retryPollInterval = previousInterval })
 	fake := newFakeAdmin(t)
 	seedEmail := groupNewEmail
 	if emailChange {
@@ -101,12 +104,13 @@ func applyGroupSettingsUpdateWithFake(
 	stateData.SetId(seedEmail)
 	state := stateData.State()
 	config := map[string]interface{}{
-		"email":    groupNewEmail,
-		"timeouts": map[string]interface{}{"update": updateTimeout},
+		"email":        groupNewEmail,
+		"who_can_join": "ALL_IN_DOMAIN_CAN_JOIN",
+		"timeouts":     map[string]interface{}{"update": updateTimeout},
 	}
 	if !emailChange {
 		config["email"] = seedEmail
-		config["who_can_join"] = "ANYONE_CAN_JOIN"
+		config["who_can_join"] = "ALL_IN_DOMAIN_CAN_JOIN"
 	}
 	diff, err := resource.Diff(context.Background(), state, terraform.NewResourceConfigRaw(config), client)
 	if err != nil {

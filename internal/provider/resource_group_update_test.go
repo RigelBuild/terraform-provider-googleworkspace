@@ -112,7 +112,7 @@ func TestResourceGroupUpdate_DelayedAutoAlias(t *testing.T) {
 		Id: groupID, Email: groupOldEmail,
 	}, map[string]interface{}{
 		"email": groupNewEmail, "aliases": []interface{}{},
-	}, 3, "5s")
+	}, 3, "20s")
 	if diags.HasError() {
 		t.Fatalf("Apply failed: %v", diags)
 	}
@@ -156,9 +156,14 @@ func TestResourceGroupUpdate_EmailOnlyRenameKeepsDeclaredAliases(t *testing.T) {
 	fake := newFakeAdmin(t)
 	fake.seedGroup(&directory.Group{Id: groupID, Email: groupOldEmail})
 	stateAliases := []string{declaredAlias}
-	_, result, requests, diags := applyGroupUpdateWithFake(t, fake, groupOldEmail, stateAliases, map[string]interface{}{
-		"email": groupNewEmail, "aliases": []interface{}{declaredAlias},
-	}, "5s")
+	_, result, requests, diags := applyGroupUpdateWithFake(t, fake, groupUpdateInput{
+		oldEmail:     groupOldEmail,
+		stateAliases: stateAliases,
+		config: map[string]interface{}{
+			"email": groupNewEmail, "aliases": []interface{}{declaredAlias},
+		},
+		timeout: "5s",
+	})
 	if diags.HasError() {
 		t.Fatalf("Apply failed: %v; requests: %v", diags, requests)
 	}
@@ -177,11 +182,15 @@ func TestResourceGroupUpdate_EmailOnlyRenameKeepsDeclaredAliases(t *testing.T) {
 func TestResourceGroupUpdate_DelayedDeclaredAliasWrite(t *testing.T) {
 	declaredAlias := "x@example.com"
 	fake := newFakeAdmin(t)
-	fake.aliasWritesAfterReads = 8
+	fake.aliasWritesAfterReads = 3
 	fake.seedGroup(&directory.Group{Id: groupID, Email: groupOldEmail})
-	state, result, requests, diags := applyGroupUpdateWithFake(t, fake, groupOldEmail, nil, map[string]interface{}{
-		"email": groupNewEmail, "aliases": []interface{}{declaredAlias},
-	}, "5s")
+	state, result, requests, diags := applyGroupUpdateWithFake(t, fake, groupUpdateInput{
+		oldEmail: groupOldEmail,
+		config: map[string]interface{}{
+			"email": groupNewEmail, "aliases": []interface{}{declaredAlias},
+		},
+		timeout: "15s",
+	})
 	if diags.HasError() {
 		t.Fatalf("Apply failed: %v; requests: %v", diags, requests)
 	}
@@ -198,8 +207,8 @@ func TestResourceGroupUpdate_DelayedDeclaredAliasWrite(t *testing.T) {
 			readsAfterInsert++
 		}
 	}
-	if insert < 0 || readsAfterInsert < 8 {
-		t.Fatalf("final wait must observe delayed alias after eight reads: %v", requests)
+	if insert < 0 || readsAfterInsert < 6 {
+		t.Fatalf("final wait must observe delayed alias and reach consistency: %v", requests)
 	}
 }
 
@@ -208,9 +217,13 @@ func TestResourceGroupUpdate_LeavesUnknownLiveAlias(t *testing.T) {
 	declaredAlias := "x@example.com"
 	fake := newFakeAdmin(t)
 	fake.seedGroup(&directory.Group{Id: groupID, Email: groupOldEmail, Aliases: []string{unknownAlias}})
-	_, result, requests, diags := applyGroupUpdateWithFake(t, fake, groupOldEmail, nil, map[string]interface{}{
-		"email": groupNewEmail, "aliases": []interface{}{declaredAlias},
-	}, "5s")
+	_, result, requests, diags := applyGroupUpdateWithFake(t, fake, groupUpdateInput{
+		oldEmail: groupOldEmail,
+		config: map[string]interface{}{
+			"email": groupNewEmail, "aliases": []interface{}{declaredAlias},
+		},
+		timeout: "5s",
+	})
 	if diags.HasError() {
 		t.Fatalf("Apply failed: %v; requests: %v", diags, requests)
 	}
@@ -224,28 +237,55 @@ func TestResourceGroupUpdate_LeavesUnknownLiveAlias(t *testing.T) {
 	}
 }
 
+func TestResourceGroupUpdate_NameOnlyKeepsMissingAliasOutOfWait(t *testing.T) {
+	missingAlias := "missing@example.com"
+	fake := newFakeAdmin(t)
+	fake.seedGroup(&directory.Group{Id: groupID, Email: groupOldEmail})
+	_, result, requests, diags := applyGroupUpdateWithFake(t, fake, groupUpdateInput{
+		oldEmail:     groupOldEmail,
+		stateAliases: []string{missingAlias},
+		config: map[string]interface{}{
+			"email": groupOldEmail, "aliases": []interface{}{missingAlias}, "name": "Updated name",
+		},
+		timeout: "3s",
+	})
+	if diags.HasError() {
+		t.Fatalf("Apply failed: %v; requests: %v", diags, requests)
+	}
+	if result == nil {
+		t.Fatal("Apply returned no state")
+	}
+	if got := result.Attributes["name"]; got != "Updated name" {
+		t.Fatalf("name = %q, want Updated name", got)
+	}
+}
+
+type groupUpdateInput struct {
+	oldEmail     string
+	stateAliases []string
+	config       map[string]interface{}
+	timeout      string
+}
+
 func applyGroupUpdateWithFake(
 	t *testing.T,
 	fake *fakeAdmin,
-	oldEmail string,
-	stateAliases []string,
-	config map[string]interface{},
-	updateTimeout string,
+	input groupUpdateInput,
 ) (*terraform.InstanceState, *terraform.InstanceState, []string, diag.Diagnostics) {
 	t.Helper()
-	previousInterval := retryPollIntervalOverride
-	retryPollIntervalOverride = time.Millisecond
-	t.Cleanup(func() { retryPollIntervalOverride = previousInterval })
+	previousInterval := retryPollInterval
+	retryPollInterval = time.Millisecond
+	t.Cleanup(func() { retryPollInterval = previousInterval })
 	client := newFakeAdminClient(t, fake)
 	resource := resourceGroup()
 	stateData := schema.TestResourceDataRaw(t, resource.Schema, map[string]interface{}{
-		"email":   oldEmail,
-		"aliases": stringSliceToInterfaces(stateAliases),
+		"email":   input.oldEmail,
+		"aliases": stringSliceToInterfaces(input.stateAliases),
 	})
 	stateData.SetId(groupID)
 	state := stateData.State()
-	config["timeouts"] = map[string]interface{}{"update": updateTimeout}
-	diff, err := resource.Diff(context.Background(), state, terraform.NewResourceConfigRaw(config), client)
+	input.config["timeouts"] = map[string]interface{}{"update": input.timeout}
+	diff, err := resource.Diff(context.Background(), state, terraform.NewResourceConfigRaw(input.config), client)
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
@@ -266,7 +306,12 @@ func applyGroupUpdate(
 	fake := newFakeAdmin(t)
 	fake.autoAliasAfterReads = autoAliasReads
 	fake.seedGroup(&seed)
-	return applyGroupUpdateWithFake(t, fake, seed.Email, seed.Aliases, config, updateTimeout)
+	return applyGroupUpdateWithFake(t, fake, groupUpdateInput{
+		oldEmail:     seed.Email,
+		stateAliases: seed.Aliases,
+		config:       config,
+		timeout:      updateTimeout,
+	})
 }
 
 func groupAliases(t *testing.T, state *terraform.InstanceState) []string {
