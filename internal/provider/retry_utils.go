@@ -2,6 +2,7 @@ package googleworkspace
 
 import (
 	"context"
+	"errors"
 	"log"
 	"regexp"
 	"time"
@@ -33,8 +34,11 @@ func retryTimeDuration(ctx context.Context, duration time.Duration, retryFunc fu
 			},
 		}
 		_, err := conf.WaitForStateContext(ctx)
-		if err != nil && lastErr != nil {
-			return lastErr
+		if err != nil {
+			var timeoutErr *resource.TimeoutError
+			if lastErr != nil && (errors.As(err, &timeoutErr) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+				return lastErr
+			}
 		}
 		return err
 	}

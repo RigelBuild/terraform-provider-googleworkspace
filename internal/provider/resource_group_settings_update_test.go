@@ -50,12 +50,15 @@ func TestResourceGroupSettingsUpdate_RequiredWithoutEmailChangeFailsFast(t *test
 }
 
 func TestResourceGroupSettingsUpdate_PropagationTimeoutFailsLoud(t *testing.T) {
-	_, _, _, diags := applyGroupSettingsUpdate(t, true, 100, "100ms")
+	_, _, requests, diags := applyGroupSettingsUpdate(t, true, 100, "100ms")
 	if !diags.HasError() {
 		t.Fatal("Apply succeeded before propagation timeout")
 	}
 	if !strings.Contains(fmt.Sprint(diags), "Required, required") {
 		t.Fatalf("timeout error does not carry Google message: %v", diags)
+	}
+	if puts := fakeAdminCountRequests(requests, "PUT /groups/v1/groups/"); puts <= 1 {
+		t.Fatalf("settings PUTs = %d, want retries before timeout", puts)
 	}
 }
 

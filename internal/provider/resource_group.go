@@ -290,12 +290,9 @@ func resourceGroupUpdate(ctx context.Context, d *schema.ResourceData, meta inter
 	oldEmail := oldEmailValue.(string)
 	emailChanged := d.HasChange("email")
 	aliasesChanged := d.HasChange("aliases")
-	var oldAliases, newAliases []string
 	oldAliasValue, newAliasValue := d.GetChange("aliases")
-	if aliasesChanged {
-		oldAliases = listOfInterfacestoStrings(oldAliasValue)
-		newAliases = listOfInterfacestoStrings(newAliasValue)
-	}
+	oldAliases := listOfInterfacestoStrings(oldAliasValue)
+	newAliases := listOfInterfacestoStrings(newAliasValue)
 
 	if emailChanged {
 		live, err := groupsService.Get(d.Id()).Do()
@@ -306,7 +303,9 @@ func resourceGroupUpdate(ctx context.Context, d *schema.ResourceData, meta inter
 			if err := aliasesService.Delete(d.Id(), email).Do(); err != nil {
 				return diag.FromErr(err)
 			}
-			if err := waitForGroupAddresses(ctx, groupsService, d.Id(), d.Timeout(schema.TimeoutUpdate), nil, []string{email}); err != nil {
+			if err := waitForGroupAddresses(ctx, groupsService, d.Id(), d.Timeout(schema.TimeoutUpdate), groupAddressExpectation{
+				absent: []string{email},
+			}); err != nil {
 				return diag.FromErr(err)
 			}
 		} else if stringInSlice(live.NonEditableAliases, email) {
@@ -333,11 +332,14 @@ func resourceGroupUpdate(ctx context.Context, d *schema.ResourceData, meta inter
 	}
 
 	if emailChanged {
-		if err := waitForGroupAddresses(ctx, groupsService, d.Id(), d.Timeout(schema.TimeoutUpdate), []string{oldEmail}, nil); err != nil {
+		if err := waitForGroupAddresses(ctx, groupsService, d.Id(), d.Timeout(schema.TimeoutUpdate), groupAddressExpectation{
+			present: []string{oldEmail},
+		}); err != nil {
 			return diag.FromErr(err)
 		}
 	}
 
+	var toDelete []string
 	if emailChanged || aliasesChanged {
 		live, err := groupsService.Get(d.Id()).Do()
 		if err != nil {
@@ -347,7 +349,7 @@ func resourceGroupUpdate(ctx context.Context, d *schema.ResourceData, meta inter
 		for _, alias := range newAliases {
 			declared[alias] = struct{}{}
 		}
-		toDelete := make([]string, 0, len(oldAliases)+1)
+		toDelete = make([]string, 0, len(oldAliases)+1)
 		for _, alias := range oldAliases {
 			if _, ok := declared[alias]; !ok && stringInSlice(live.Aliases, alias) {
 				toDelete = append(toDelete, alias)
@@ -373,7 +375,10 @@ func resourceGroupUpdate(ctx context.Context, d *schema.ResourceData, meta inter
 		}
 	}
 
-	if err := waitForGroupAddresses(ctx, groupsService, d.Id(), d.Timeout(schema.TimeoutUpdate), nil, nil); err != nil {
+	if err := waitForGroupAddresses(ctx, groupsService, d.Id(), d.Timeout(schema.TimeoutUpdate), groupAddressExpectation{
+		present: newAliases,
+		absent:  toDelete,
+	}); err != nil {
 		return diag.FromErr(err)
 	}
 
@@ -388,12 +393,17 @@ func groupAddresses(group *directory.Group) []string {
 	return addresses
 }
 
+type groupAddressExpectation struct {
+	present []string
+	absent  []string
+}
+
 func waitForGroupAddresses(
 	ctx context.Context,
 	groupsService *directory.GroupsService,
 	id string,
 	timeout time.Duration,
-	present, absent []string,
+	expectation groupAddressExpectation,
 ) error {
 	var missing, extra []string
 	cc := consistencyCheck{resourceType: "group", timeout: timeout}
@@ -411,8 +421,8 @@ func waitForGroupAddresses(
 		} else {
 			cc.handleNewEtag(group.Etag)
 			addresses := groupAddresses(group)
-			missing = missingAddresses(addresses, present)
-			extra = extraAddresses(addresses, absent)
+			missing = missingAddresses(addresses, expectation.present)
+			extra = extraAddresses(addresses, expectation.absent)
 			addressesConsistent = len(missing) == 0 && len(extra) == 0
 			if addressesConsistent {
 				cc.currConsistent++

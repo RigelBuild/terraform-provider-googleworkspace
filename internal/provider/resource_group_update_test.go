@@ -144,34 +144,106 @@ func TestResourceGroupUpdate_TargetIsNonEditableAlias(t *testing.T) {
 	if !strings.Contains(fmt.Sprint(diags), groupNewEmail) {
 		t.Fatalf("error does not name non-editable address %s: %v", groupNewEmail, diags)
 	}
-	if requestIndex(requests, "PATCH ") >= 0 || firstAliasWriteIndex(requests) >= 0 {
+	if requestIndex(requests, "PUT /admin/directory/v1/groups/") >= 0 ||
+		requestIndex(requests, "PATCH /admin/directory/v1/groups/") >= 0 ||
+		firstAliasWriteIndex(requests) >= 0 {
 		t.Fatalf("non-editable target must fail before any writes: %v", requests)
 	}
 }
 
-func applyGroupUpdate(
+func TestResourceGroupUpdate_EmailOnlyRenameKeepsDeclaredAliases(t *testing.T) {
+	declaredAlias := "x@example.com"
+	fake := newFakeAdmin(t)
+	fake.seedGroup(&directory.Group{Id: groupID, Email: groupOldEmail})
+	stateAliases := []string{declaredAlias}
+	_, result, requests, diags := applyGroupUpdateWithFake(t, fake, groupOldEmail, stateAliases, map[string]interface{}{
+		"email": groupNewEmail, "aliases": []interface{}{declaredAlias},
+	}, "5s")
+	if diags.HasError() {
+		t.Fatalf("Apply failed: %v; requests: %v", diags, requests)
+	}
+	got := groupAliases(t, result)
+	if len(got) != 1 || got[0] != declaredAlias {
+		t.Fatalf("aliases = %v, want [%s]", got, declaredAlias)
+	}
+	if requestIndexContaining(requests, "DELETE ", groupOldEmail) < 0 {
+		t.Fatalf("old primary alias was not deleted: %v", requests)
+	}
+	if requestIndexContaining(requests, "DELETE ", declaredAlias) >= 0 {
+		t.Fatalf("declared alias was deleted: %v", requests)
+	}
+}
+
+func TestResourceGroupUpdate_DelayedDeclaredAliasWrite(t *testing.T) {
+	declaredAlias := "x@example.com"
+	fake := newFakeAdmin(t)
+	fake.aliasWritesAfterReads = 8
+	fake.seedGroup(&directory.Group{Id: groupID, Email: groupOldEmail})
+	state, result, requests, diags := applyGroupUpdateWithFake(t, fake, groupOldEmail, nil, map[string]interface{}{
+		"email": groupNewEmail, "aliases": []interface{}{declaredAlias},
+	}, "5s")
+	if diags.HasError() {
+		t.Fatalf("Apply failed: %v; requests: %v", diags, requests)
+	}
+	if state == nil || result == nil {
+		t.Fatal("Apply returned no state")
+	}
+	if got := groupAliases(t, result); len(got) != 1 || got[0] != declaredAlias {
+		t.Fatalf("aliases = %v, want [%s]", got, declaredAlias)
+	}
+	insert := requestIndex(requests, "POST /admin/directory/v1/groups/")
+	readsAfterInsert := 0
+	for i := insert + 1; i < len(requests); i++ {
+		if strings.HasPrefix(requests[i], "GET /admin/directory/v1/groups/") {
+			readsAfterInsert++
+		}
+	}
+	if insert < 0 || readsAfterInsert < 8 {
+		t.Fatalf("final wait must observe delayed alias after eight reads: %v", requests)
+	}
+}
+
+func TestResourceGroupUpdate_LeavesUnknownLiveAlias(t *testing.T) {
+	unknownAlias := "unknown@example.com"
+	declaredAlias := "x@example.com"
+	fake := newFakeAdmin(t)
+	fake.seedGroup(&directory.Group{Id: groupID, Email: groupOldEmail, Aliases: []string{unknownAlias}})
+	_, result, requests, diags := applyGroupUpdateWithFake(t, fake, groupOldEmail, nil, map[string]interface{}{
+		"email": groupNewEmail, "aliases": []interface{}{declaredAlias},
+	}, "5s")
+	if diags.HasError() {
+		t.Fatalf("Apply failed: %v; requests: %v", diags, requests)
+	}
+	for _, want := range []string{unknownAlias, declaredAlias} {
+		if !stringInSlice(groupAliases(t, result), want) {
+			t.Errorf("aliases %v do not contain %s", groupAliases(t, result), want)
+		}
+	}
+	if requestIndexContaining(requests, "DELETE ", unknownAlias) >= 0 {
+		t.Fatalf("unknown live alias was deleted: %v", requests)
+	}
+}
+
+func applyGroupUpdateWithFake(
 	t *testing.T,
-	seed directory.Group,
+	fake *fakeAdmin,
+	oldEmail string,
+	stateAliases []string,
 	config map[string]interface{},
-	autoAliasReads int,
 	updateTimeout string,
 ) (*terraform.InstanceState, *terraform.InstanceState, []string, diag.Diagnostics) {
+	t.Helper()
 	previousInterval := retryPollIntervalOverride
 	retryPollIntervalOverride = time.Millisecond
 	t.Cleanup(func() { retryPollIntervalOverride = previousInterval })
-	fake := newFakeAdmin(t)
-	fake.autoAliasAfterReads = autoAliasReads
-	fake.seedGroup(&seed)
 	client := newFakeAdminClient(t, fake)
-
 	resource := resourceGroup()
 	stateData := schema.TestResourceDataRaw(t, resource.Schema, map[string]interface{}{
-		"email":   seed.Email,
-		"aliases": stringSliceToInterfaces(seed.Aliases),
+		"email":   oldEmail,
+		"aliases": stringSliceToInterfaces(stateAliases),
 	})
-	stateData.SetId(seed.Id)
+	stateData.SetId(groupID)
 	state := stateData.State()
-
 	config["timeouts"] = map[string]interface{}{"update": updateTimeout}
 	diff, err := resource.Diff(context.Background(), state, terraform.NewResourceConfigRaw(config), client)
 	if err != nil {
@@ -182,6 +254,19 @@ func applyGroupUpdate(
 	}
 	result, diags := resource.Apply(context.Background(), state, diff, client)
 	return state, result, fake.requestLog(), diags
+}
+
+func applyGroupUpdate(
+	t *testing.T,
+	seed directory.Group,
+	config map[string]interface{},
+	autoAliasReads int,
+	updateTimeout string,
+) (*terraform.InstanceState, *terraform.InstanceState, []string, diag.Diagnostics) {
+	fake := newFakeAdmin(t)
+	fake.autoAliasAfterReads = autoAliasReads
+	fake.seedGroup(&seed)
+	return applyGroupUpdateWithFake(t, fake, seed.Email, seed.Aliases, config, updateTimeout)
 }
 
 func groupAliases(t *testing.T, state *terraform.InstanceState) []string {
@@ -229,9 +314,8 @@ func requestIndexContaining(requests []string, prefix, value string) int {
 
 func firstAliasWriteIndex(requests []string) int {
 	for i, request := range requests {
-		if (strings.HasPrefix(request, "DELETE ") || strings.HasPrefix(request, "POST ")) &&
-			strings.Contains(request, "/aliases/") ||
-			strings.HasPrefix(request, "POST ") && strings.Contains(request, "/aliases?") {
+		if (strings.HasPrefix(request, "POST ") && strings.HasSuffix(request, "/aliases")) ||
+			(strings.HasPrefix(request, "DELETE ") && strings.Contains(request, "/aliases/")) {
 			return i
 		}
 	}

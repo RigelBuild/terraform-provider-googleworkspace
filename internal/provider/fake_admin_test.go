@@ -22,6 +22,7 @@ type fakeAdmin struct {
 	groups                      map[string]*fakeAdminGroup
 	requests                    []string
 	autoAliasAfterReads         int
+	aliasWritesAfterReads       int
 	settingsFailuresAfterRename int
 	settingsFailures            map[string]int
 	settingsErrors              map[string]fakeAdminError
@@ -33,6 +34,12 @@ type fakeAdminGroup struct {
 	group                   directory.Group
 	pendingAutoAlias        string
 	remainingAutoAliasReads int
+	pendingAliasWrites      map[string]*fakeAdminAliasWrite
+}
+
+type fakeAdminAliasWrite struct {
+	present        bool
+	remainingReads int
 }
 
 type fakeAdminError struct {
@@ -69,7 +76,7 @@ func (f *fakeAdmin) seedGroup(group *directory.Group) {
 	if copy.Etag == "" {
 		copy.Etag = "etag-1"
 	}
-	f.groups[copy.Id] = &fakeAdminGroup{group: copy}
+	f.groups[copy.Id] = &fakeAdminGroup{group: copy, pendingAliasWrites: make(map[string]*fakeAdminAliasWrite)}
 	f.settings[copy.Email] = fakeAdminDefaultSettings(copy.Email)
 	f.settingsEtags[copy.Email] = "settings-etag-1"
 }
@@ -163,6 +170,25 @@ func (f *fakeAdmin) serveGroupGet(w http.ResponseWriter, r *http.Request, group 
 			group.group.Etag = f.nextEtag(group.group.Etag)
 		}
 	}
+	for alias, pending := range group.pendingAliasWrites {
+		if pending.remainingReads > 0 {
+			pending.remainingReads--
+		}
+		if pending.remainingReads == 0 {
+			if pending.present {
+				group.group.Aliases = append(group.group.Aliases, alias)
+			} else {
+				for i, current := range group.group.Aliases {
+					if current == alias {
+						group.group.Aliases = append(group.group.Aliases[:i], group.group.Aliases[i+1:]...)
+						break
+					}
+				}
+			}
+			delete(group.pendingAliasWrites, alias)
+			group.group.Etag = f.nextEtag(group.group.Etag)
+		}
+	}
 
 	w.Header().Set("ETag", group.group.Etag)
 	if r.Header.Get("If-None-Match") == group.group.Etag {
@@ -222,9 +248,13 @@ func (f *fakeAdmin) serveAliasInsert(w http.ResponseWriter, r *http.Request, gro
 		f.writeError(w, http.StatusBadRequest, "invalid", "invalid alias body")
 		return
 	}
-	if alias.Alias == group.group.Email || stringInSlice(group.group.Aliases, alias.Alias) ||
-		stringInSlice(group.group.NonEditableAliases, alias.Alias) {
-		f.writeError(w, http.StatusConflict, "duplicate", "duplicate alias")
+	if f.aliasWritesAfterReads > 0 {
+		group.pendingAliasWrites[alias.Alias] = &fakeAdminAliasWrite{
+			present:        true,
+			remainingReads: f.aliasWritesAfterReads,
+		}
+		w.Header().Set("ETag", group.group.Etag)
+		f.writeJSON(w, http.StatusOK, &alias)
 		return
 	}
 	group.group.Aliases = append(group.group.Aliases, alias.Alias)
@@ -285,12 +315,22 @@ func (f *fakeAdmin) serveSettings(w http.ResponseWriter, r *http.Request, email 
 	update.IsArchived = fakeAdminValue(update.IsArchived, settings.IsArchived)
 	update.ArchiveOnly = fakeAdminValue(update.ArchiveOnly, settings.ArchiveOnly)
 	update.IncludeCustomFooter = fakeAdminValue(update.IncludeCustomFooter, settings.IncludeCustomFooter)
-	update.SendMessageDenyNotification = fakeAdminValue(update.SendMessageDenyNotification, settings.SendMessageDenyNotification)
-	update.MembersCanPostAsTheGroup = fakeAdminValue(update.MembersCanPostAsTheGroup, settings.MembersCanPostAsTheGroup)
-	update.IncludeInGlobalAddressList = fakeAdminValue(update.IncludeInGlobalAddressList, settings.IncludeInGlobalAddressList)
-	update.CustomRolesEnabledForSettingsToBeMerged = fakeAdminValue(update.CustomRolesEnabledForSettingsToBeMerged, settings.CustomRolesEnabledForSettingsToBeMerged)
-	update.EnableCollaborativeInbox = fakeAdminValue(update.EnableCollaborativeInbox, settings.EnableCollaborativeInbox)
-	f.settings[email] = &update
+	update.SendMessageDenyNotification = fakeAdminValue(
+		update.SendMessageDenyNotification, settings.SendMessageDenyNotification,
+	)
+	update.MembersCanPostAsTheGroup = fakeAdminValue(
+		update.MembersCanPostAsTheGroup, settings.MembersCanPostAsTheGroup,
+	)
+	update.IncludeInGlobalAddressList = fakeAdminValue(
+		update.IncludeInGlobalAddressList, settings.IncludeInGlobalAddressList,
+	)
+	update.CustomRolesEnabledForSettingsToBeMerged = fakeAdminValue(
+		update.CustomRolesEnabledForSettingsToBeMerged,
+		settings.CustomRolesEnabledForSettingsToBeMerged,
+	)
+	update.EnableCollaborativeInbox = fakeAdminValue(
+		update.EnableCollaborativeInbox, settings.EnableCollaborativeInbox,
+	)
 	f.settingsEtags[email] = f.nextSettingsEtag(f.settingsEtags[email])
 	w.Header().Set("ETag", f.settingsEtags[email])
 	f.writeJSON(w, http.StatusOK, &update)

@@ -709,7 +709,7 @@ func resourceGroupSettingsUpdate(ctx context.Context, d *schema.ResourceData, me
 				return retryErr
 			}
 			log.Printf("[WARN] Retrying group settings update while email %q propagates: %v", email, retryErr)
-			return fmt.Errorf("timed out while waiting for group_settings email propagation: %v", retryErr)
+			return fmt.Errorf("timed out while waiting for group_settings email propagation: %w", retryErr)
 		})
 		if err != nil {
 			return diag.FromErr(err)
