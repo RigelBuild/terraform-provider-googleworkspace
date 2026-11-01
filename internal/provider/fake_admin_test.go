@@ -249,8 +249,11 @@ func (f *fakeAdmin) serveAliasInsert(w http.ResponseWriter, r *http.Request, gro
 		return
 	}
 	pending := group.pendingAliasWrites[alias.Alias]
-	if alias.Alias == group.group.Email || stringInSlice(group.group.Aliases, alias.Alias) ||
-		stringInSlice(group.group.NonEditableAliases, alias.Alias) || (pending != nil && pending.present) {
+	isPrimary := alias.Alias == group.group.Email
+	isHeld := stringInSlice(group.group.Aliases, alias.Alias) ||
+		stringInSlice(group.group.NonEditableAliases, alias.Alias)
+	isPending := pending != nil && pending.present
+	if isPrimary || isHeld || isPending {
 		f.writeError(w, http.StatusConflict, "duplicate", "duplicate alias")
 		return
 	}
@@ -338,6 +341,7 @@ func (f *fakeAdmin) serveSettings(w http.ResponseWriter, r *http.Request, email 
 		update.EnableCollaborativeInbox, settings.EnableCollaborativeInbox,
 	)
 	f.settings[email] = &update
+	f.settingsEtags[email] = f.nextSettingsEtag(f.settingsEtags[email])
 	w.Header().Set("ETag", f.settingsEtags[email])
 	f.writeJSON(w, http.StatusOK, &update)
 }

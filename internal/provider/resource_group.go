@@ -365,8 +365,9 @@ func resourceGroupUpdate(ctx context.Context, d *schema.ResourceData, meta inter
 				return diag.FromErr(err)
 			}
 		}
+		liveAddresses := groupAddresses(live)
 		for _, alias := range newAliases {
-			if !stringInSlice(live.Aliases, alias) && alias != oldEmail {
+			if !stringInSlice(liveAddresses, alias) && alias != oldEmail {
 				aliasObj := directory.Alias{Alias: alias}
 				if _, err := aliasesService.Insert(d.Id(), &aliasObj).Do(); err != nil {
 					return diag.FromErr(err)
