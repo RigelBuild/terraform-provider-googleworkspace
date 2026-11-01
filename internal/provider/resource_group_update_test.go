@@ -251,8 +251,10 @@ func TestResourceGroupUpdate_DeclaredNonEditableAliasFails(t *testing.T) {
 	if !diags.HasError() || !strings.Contains(fmt.Sprint(diags), domainAlias) {
 		t.Fatalf("Apply diagnostics %v do not name non-editable alias %s", diags, domainAlias)
 	}
-	if got := fakeAdminCountRequests(requests, "POST "); got != 0 {
-		t.Fatalf("alias inserts = %d, want 0: %v", got, requests)
+	for _, method := range []string{"POST ", "PUT ", "PATCH ", "DELETE "} {
+		if got := fakeAdminCountRequests(requests, method); got != 0 {
+			t.Fatalf("%swrites = %d, want 0: %v", method, got, requests)
+		}
 	}
 }
 

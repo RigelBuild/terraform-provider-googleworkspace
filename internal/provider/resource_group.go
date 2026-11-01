@@ -294,12 +294,21 @@ func resourceGroupUpdate(ctx context.Context, d *schema.ResourceData, meta inter
 	oldAliases := listOfInterfacestoStrings(oldAliasValue)
 	newAliases := listOfInterfacestoStrings(newAliasValue)
 
-	if emailChanged {
+	if emailChanged || aliasesChanged {
 		live, err := groupsService.Get(d.Id()).Do()
 		if err != nil {
 			return diag.FromErr(err)
 		}
-		if stringInSlice(live.Aliases, email) {
+		// Validate before any write so a rejected update leaves the group unchanged.
+		if emailChanged && stringInSlice(live.NonEditableAliases, email) {
+			return diag.Errorf("cannot promote non-editable group alias %q to primary email", email)
+		}
+		for _, alias := range newAliases {
+			if stringInSlice(live.NonEditableAliases, alias) {
+				return diag.Errorf("aliases cannot manage non-editable group alias %q", alias)
+			}
+		}
+		if emailChanged && stringInSlice(live.Aliases, email) {
 			if err := aliasesService.Delete(d.Id(), email).Do(); err != nil {
 				return diag.FromErr(err)
 			}
@@ -308,8 +317,6 @@ func resourceGroupUpdate(ctx context.Context, d *schema.ResourceData, meta inter
 			}); err != nil {
 				return diag.FromErr(err)
 			}
-		} else if stringInSlice(live.NonEditableAliases, email) {
-			return diag.Errorf("cannot promote non-editable group alias %q to primary email", email)
 		}
 	}
 
@@ -348,11 +355,6 @@ func resourceGroupUpdate(ctx context.Context, d *schema.ResourceData, meta inter
 		declared := make(map[string]struct{}, len(newAliases))
 		for _, alias := range newAliases {
 			declared[alias] = struct{}{}
-		}
-		for _, alias := range newAliases {
-			if stringInSlice(live.NonEditableAliases, alias) {
-				return diag.Errorf("aliases cannot manage non-editable group alias %q", alias)
-			}
 		}
 		toDelete = make([]string, 0, len(oldAliases)+1)
 		for _, alias := range oldAliases {
