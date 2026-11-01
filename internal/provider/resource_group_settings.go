@@ -697,9 +697,29 @@ func resourceGroupSettingsUpdate(ctx context.Context, d *schema.ResourceData, me
 		groupSettingsObj.ForceSendFields = forceSendFields
 	}
 
-	groupSettings, err := groupsService.Update(email, &groupSettingsObj).Do()
-	if err != nil {
-		return diag.FromErr(err)
+	var groupSettings *groupssettings.Groups
+	if d.HasChange("email") {
+		err := retryTimeDuration(ctx, d.Timeout(schema.TimeoutUpdate), func() error {
+			var retryErr error
+			groupSettings, retryErr = groupsService.Update(email, &groupSettingsObj).Do()
+			if retryErr == nil {
+				return nil
+			}
+			if !isGroupSettingsEmailNotPropagated(retryErr) {
+				return retryErr
+			}
+			log.Printf("[WARN] Retrying group settings update while email %q propagates: %v", email, retryErr)
+			return fmt.Errorf("timed out while waiting for group_settings email propagation: %w", retryErr)
+		})
+		if err != nil {
+			return diag.FromErr(err)
+		}
+	} else {
+		var err error
+		groupSettings, err = groupsService.Update(email, &groupSettingsObj).Do()
+		if err != nil {
+			return diag.FromErr(err)
+		}
 	}
 
 	d.SetId(groupSettings.Email)
@@ -709,7 +729,7 @@ func resourceGroupSettingsUpdate(ctx context.Context, d *schema.ResourceData, me
 		timeout:      d.Timeout(schema.TimeoutUpdate),
 		resourceType: "group_settings",
 	}
-	err = retryTimeDuration(ctx, d.Timeout(schema.TimeoutUpdate), func() error {
+	err := retryTimeDuration(ctx, d.Timeout(schema.TimeoutUpdate), func() error {
 		if cc.reachedConsistency(numInserts) {
 			return nil
 		}

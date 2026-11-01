@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
@@ -265,8 +266,6 @@ func resourceGroupRead(ctx context.Context, d *schema.ResourceData, meta interfa
 
 func resourceGroupUpdate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	var diags diag.Diagnostics
-
-	// use the meta value to retrieve your client from the provider configure method
 	client := meta.(*apiClient)
 
 	email := d.Get("email").(string)
@@ -282,104 +281,188 @@ func resourceGroupUpdate(ctx context.Context, d *schema.ResourceData, meta inter
 		return diags
 	}
 
-	groupObj := directory.Group{}
-
-	if d.HasChange("email") {
-		groupObj.Email = d.Get("email").(string)
+	aliasesService, diags := GetGroupAliasService(groupsService)
+	if diags.HasError() {
+		return diags
 	}
 
+	oldEmailValue, _ := d.GetChange("email")
+	oldEmail := oldEmailValue.(string)
+	emailChanged := d.HasChange("email")
+	aliasesChanged := d.HasChange("aliases")
+	oldAliasValue, newAliasValue := d.GetChange("aliases")
+	oldAliases := listOfInterfacestoStrings(oldAliasValue)
+	newAliases := listOfInterfacestoStrings(newAliasValue)
+
+	if emailChanged || aliasesChanged {
+		live, err := groupsService.Get(d.Id()).Do()
+		if err != nil {
+			return diag.FromErr(err)
+		}
+		// Validate before any write so a rejected update leaves the group unchanged.
+		if emailChanged && stringInSlice(live.NonEditableAliases, email) {
+			return diag.Errorf("cannot promote non-editable group alias %q to primary email", email)
+		}
+		for _, alias := range newAliases {
+			if stringInSlice(live.NonEditableAliases, alias) {
+				return diag.Errorf("aliases cannot manage non-editable group alias %q", alias)
+			}
+		}
+		if emailChanged && stringInSlice(live.Aliases, email) {
+			if err := aliasesService.Delete(d.Id(), email).Do(); err != nil {
+				return diag.FromErr(err)
+			}
+			if err := waitForGroupAddresses(ctx, groupsService, d.Id(), d.Timeout(schema.TimeoutUpdate), groupAddressExpectation{
+				absent: []string{email},
+			}); err != nil {
+				return diag.FromErr(err)
+			}
+		}
+	}
+
+	groupObj := directory.Group{}
+	if emailChanged {
+		groupObj.Email = email
+	}
 	if d.HasChange("name") {
 		groupObj.Name = d.Get("name").(string)
 	}
-
 	if d.HasChange("description") {
 		groupObj.Description = d.Get("description").(string)
 	}
-
-	numInserts := 0
-	if d.HasChange("aliases") {
-		old, new := d.GetChange("aliases")
-		oldAliases := listOfInterfacestoStrings(old.([]interface{}))
-		newAliases := listOfInterfacestoStrings(new.([]interface{}))
-
-		aliasesService, diags := GetGroupAliasService(groupsService)
-		if diags.HasError() {
-			return diags
-		}
-
-		// Remove old aliases that aren't in the new aliases list
-		for _, alias := range oldAliases {
-			if stringInSlice(newAliases, alias) {
-				continue
-			}
-
-			err := aliasesService.Delete(d.Id(), alias).Do()
-			if err != nil {
-				return diag.FromErr(err)
-			}
-		}
-
-		// Insert all new aliases that weren't previously in state
-		for _, alias := range newAliases {
-			if stringInSlice(oldAliases, alias) {
-				continue
-			}
-
-			aliasObj := directory.Alias{
-				Alias: alias,
-			}
-
-			_, err := aliasesService.Insert(d.Id(), &aliasObj).Do()
-			if err != nil {
-				return diag.FromErr(err)
-			}
-			numInserts += 1
-		}
-	}
-
 	if &groupObj != new(directory.Group) {
 		group, err := groupsService.Update(d.Id(), &groupObj).Do()
 		if err != nil {
 			return diag.FromErr(err)
 		}
-		numInserts += 1
-
 		d.SetId(group.Id)
 	}
 
-	// UPDATE will respond with the Group that will be created, however, it is eventually consistent
-	// After UPDATE, the etag is updated along with the Group (and any aliases),
-	// once we get a consistent etag, we can feel confident that our Group is also consistent
-	cc := consistencyCheck{
-		resourceType: "group",
-		timeout:      d.Timeout(schema.TimeoutUpdate),
+	if emailChanged {
+		if err := waitForGroupAddresses(ctx, groupsService, d.Id(), d.Timeout(schema.TimeoutUpdate), groupAddressExpectation{
+			present: []string{oldEmail},
+		}); err != nil {
+			return diag.FromErr(err)
+		}
 	}
-	err := retryTimeDuration(ctx, d.Timeout(schema.TimeoutUpdate), func() error {
-		var retryErr error
 
-		if cc.reachedConsistency(numInserts) {
-			return nil
+	var toDelete []string
+	if emailChanged || aliasesChanged {
+		live, err := groupsService.Get(d.Id()).Do()
+		if err != nil {
+			return diag.FromErr(err)
 		}
-
-		newGroup, retryErr := groupsService.Get(d.Id()).IfNoneMatch(cc.lastEtag).Do()
-		if googleapi.IsNotModified(retryErr) {
-			cc.currConsistent += 1
-		} else if retryErr != nil {
-			return fmt.Errorf("unexpected error during retries of %s: %s", cc.resourceType, retryErr)
-		} else {
-			cc.handleNewEtag(newGroup.Etag)
+		declared := make(map[string]struct{}, len(newAliases))
+		for _, alias := range newAliases {
+			declared[alias] = struct{}{}
 		}
+		toDelete = make([]string, 0, len(oldAliases)+1)
+		for _, alias := range oldAliases {
+			if _, ok := declared[alias]; !ok && stringInSlice(live.Aliases, alias) {
+				toDelete = append(toDelete, alias)
+			}
+		}
+		if emailChanged {
+			if _, ok := declared[oldEmail]; !ok && stringInSlice(live.Aliases, oldEmail) {
+				toDelete = append(toDelete, oldEmail)
+			}
+		}
+		for _, alias := range toDelete {
+			if err := aliasesService.Delete(d.Id(), alias).Do(); err != nil {
+				return diag.FromErr(err)
+			}
+		}
+		for _, alias := range newAliases {
+			if !stringInSlice(live.Aliases, alias) && alias != oldEmail {
+				aliasObj := directory.Alias{Alias: alias}
+				if _, err := aliasesService.Insert(d.Id(), &aliasObj).Do(); err != nil {
+					return diag.FromErr(err)
+				}
+			}
+		}
+	}
 
-		return fmt.Errorf("timed out while waiting for %s to be updated", cc.resourceType)
-	})
-
-	if err != nil {
+	expectation := groupAddressExpectation{}
+	if emailChanged || aliasesChanged {
+		expectation = groupAddressExpectation{present: newAliases, absent: toDelete}
+	}
+	if err := waitForGroupAddresses(ctx, groupsService, d.Id(), d.Timeout(schema.TimeoutUpdate), expectation); err != nil {
 		return diag.FromErr(err)
 	}
 
-	log.Printf("[DEBUG] Finished creating Group %q: %#v", d.Id(), email)
-
+	log.Printf("[DEBUG] Finished updating Group %q: %#v", d.Id(), email)
 	return resourceGroupRead(ctx, d, meta)
+}
+
+func groupAddresses(group *directory.Group) []string {
+	addresses := make([]string, 0, len(group.Aliases)+len(group.NonEditableAliases))
+	addresses = append(addresses, group.Aliases...)
+	addresses = append(addresses, group.NonEditableAliases...)
+	return addresses
+}
+
+type groupAddressExpectation struct {
+	present []string
+	absent  []string
+}
+
+func waitForGroupAddresses(
+	ctx context.Context,
+	groupsService *directory.GroupsService,
+	id string,
+	timeout time.Duration,
+	expectation groupAddressExpectation,
+) error {
+	var missing, extra []string
+	cc := consistencyCheck{resourceType: "group", timeout: timeout}
+	addressesConsistent := false
+	return retryTimeDuration(ctx, timeout, func() error {
+		group, retryErr := groupsService.Get(id).IfNoneMatch(cc.lastEtag).Do()
+		if googleapi.IsNotModified(retryErr) {
+			if addressesConsistent {
+				cc.currConsistent++
+			} else {
+				cc.currConsistent = 0
+			}
+		} else if retryErr != nil {
+			return fmt.Errorf("unexpected error while checking group addresses: %w", retryErr)
+		} else {
+			cc.handleNewEtag(group.Etag)
+			addresses := groupAddresses(group)
+			missing = missingAddresses(addresses, expectation.present)
+			extra = extraAddresses(addresses, expectation.absent)
+			addressesConsistent = len(missing) == 0 && len(extra) == 0
+			if addressesConsistent {
+				cc.currConsistent++
+			}
+		}
+		if cc.currConsistent >= numConsistent {
+			return nil
+		}
+		return fmt.Errorf("timed out while waiting for group addresses: missing %v, extra %v", missing, extra)
+	})
+}
+
+func missingAddresses(addresses, present []string) []string {
+	var missing []string
+	for _, address := range present {
+		if !stringInSlice(addresses, address) {
+			missing = append(missing, address)
+		}
+	}
+	sort.Strings(missing)
+	return missing
+}
+
+func extraAddresses(addresses, absent []string) []string {
+	var extra []string
+	for _, address := range absent {
+		if stringInSlice(addresses, address) {
+			extra = append(extra, address)
+		}
+	}
+	sort.Strings(extra)
+	return extra
 }
 
 func resourceGroupDelete(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {

@@ -4,25 +4,59 @@ import (
 	"context"
 	"log"
 	"regexp"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/errwrap"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 )
 
+// retryPollInterval is zero in production, which keeps the SDK backoff; tests set it to poll fast.
+var retryPollInterval time.Duration
+
 func retryTimeDuration(ctx context.Context, duration time.Duration, retryFunc func() error) error {
-	return resource.RetryContext(ctx, duration, func() *resource.RetryError {
-		err := retryFunc()
+	var resultErr error
+	var resultErrMu sync.Mutex
 
-		if err == nil {
-			return nil
-		}
-		if IsNotConsistent(err) {
-			return resource.RetryableError(err)
-		}
+	conf := &resource.StateChangeConf{
+		Pending:      []string{"retryableerror"},
+		Target:       []string{"success"},
+		Timeout:      duration,
+		MinTimeout:   500 * time.Millisecond,
+		PollInterval: retryPollInterval,
+		Refresh: func() (interface{}, string, error) {
+			err := retryFunc()
 
-		return resource.NonRetryableError(err)
-	})
+			resultErrMu.Lock()
+			defer resultErrMu.Unlock()
+
+			if err == nil {
+				resultErr = nil
+				return 42, "success", nil
+			}
+
+			retryErr := resource.NonRetryableError(err)
+			if IsNotConsistent(err) {
+				retryErr = resource.RetryableError(err)
+			}
+			resultErr = retryErr.Err
+
+			if retryErr.Retryable {
+				return 42, "retryableerror", nil
+			}
+			return nil, "quit", retryErr.Err
+		},
+	}
+
+	_, waitErr := conf.WaitForStateContext(ctx)
+
+	resultErrMu.Lock()
+	defer resultErrMu.Unlock()
+
+	if resultErr == nil {
+		return waitErr
+	}
+	return resultErr
 }
 
 func IsNotConsistent(err error) bool {
@@ -31,7 +65,6 @@ func IsNotConsistent(err error) bool {
 		return false
 	}
 	matched := len(errString.FindAllStringSubmatch(err.Error(), 1)) > 0
-
 	return matched
 }
 
