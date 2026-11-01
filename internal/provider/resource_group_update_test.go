@@ -237,7 +237,7 @@ func TestResourceGroupUpdate_LeavesUnknownLiveAlias(t *testing.T) {
 	}
 }
 
-func TestResourceGroupUpdate_DeclaredNonEditableAliasNotInserted(t *testing.T) {
+func TestResourceGroupUpdate_DeclaredNonEditableAliasFails(t *testing.T) {
 	domainAlias := "group@alias-domain.example.com"
 	fake := newFakeAdmin(t)
 	fake.seedGroup(&directory.Group{Id: groupID, Email: groupOldEmail, NonEditableAliases: []string{domainAlias}})
@@ -248,8 +248,8 @@ func TestResourceGroupUpdate_DeclaredNonEditableAliasNotInserted(t *testing.T) {
 		},
 		timeout: "5s",
 	})
-	if diags.HasError() {
-		t.Fatalf("Apply failed: %v; requests: %v", diags, requests)
+	if !diags.HasError() || !strings.Contains(fmt.Sprint(diags), domainAlias) {
+		t.Fatalf("Apply diagnostics %v do not name non-editable alias %s", diags, domainAlias)
 	}
 	if got := fakeAdminCountRequests(requests, "POST "); got != 0 {
 		t.Fatalf("alias inserts = %d, want 0: %v", got, requests)

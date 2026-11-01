@@ -349,6 +349,11 @@ func resourceGroupUpdate(ctx context.Context, d *schema.ResourceData, meta inter
 		for _, alias := range newAliases {
 			declared[alias] = struct{}{}
 		}
+		for _, alias := range newAliases {
+			if stringInSlice(live.NonEditableAliases, alias) {
+				return diag.Errorf("aliases cannot manage non-editable group alias %q", alias)
+			}
+		}
 		toDelete = make([]string, 0, len(oldAliases)+1)
 		for _, alias := range oldAliases {
 			if _, ok := declared[alias]; !ok && stringInSlice(live.Aliases, alias) {
@@ -365,9 +370,8 @@ func resourceGroupUpdate(ctx context.Context, d *schema.ResourceData, meta inter
 				return diag.FromErr(err)
 			}
 		}
-		liveAddresses := groupAddresses(live)
 		for _, alias := range newAliases {
-			if !stringInSlice(liveAddresses, alias) && alias != oldEmail {
+			if !stringInSlice(live.Aliases, alias) && alias != oldEmail {
 				aliasObj := directory.Alias{Alias: alias}
 				if _, err := aliasesService.Insert(d.Id(), &aliasObj).Do(); err != nil {
 					return diag.FromErr(err)
