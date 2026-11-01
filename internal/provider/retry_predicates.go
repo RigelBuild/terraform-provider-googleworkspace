@@ -123,3 +123,17 @@ func isNotFound(err error) bool {
 	ae, ok := err.(*googleapi.Error)
 	return ok && ae.Code == http.StatusNotFound
 }
+
+func isGroupSettingsEmailNotPropagated(err error) bool {
+	gerr, ok := err.(*googleapi.Error)
+	if !ok || gerr.Code != http.StatusBadRequest {
+		return false
+	}
+
+	for _, apiErr := range gerr.Errors {
+		if apiErr.Reason == "required" {
+			return true
+		}
+	}
+	return false
+}
