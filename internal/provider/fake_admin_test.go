@@ -3,6 +3,7 @@ package googleworkspace
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -28,6 +29,7 @@ type fakeAdmin struct {
 	settingsErrors              map[string]fakeAdminError
 	settings                    map[string]*groupssettings.Groups
 	settingsEtags               map[string]string
+	settingsPutBodies           map[string]map[string]json.RawMessage
 }
 
 type fakeAdminGroup struct {
@@ -50,12 +52,13 @@ type fakeAdminError struct {
 
 func newFakeAdmin(t *testing.T) *fakeAdmin {
 	f := &fakeAdmin{
-		t:                t,
-		groups:           make(map[string]*fakeAdminGroup),
-		settingsFailures: make(map[string]int),
-		settingsErrors:   make(map[string]fakeAdminError),
-		settings:         make(map[string]*groupssettings.Groups),
-		settingsEtags:    make(map[string]string),
+		t:                 t,
+		groups:            make(map[string]*fakeAdminGroup),
+		settingsFailures:  make(map[string]int),
+		settingsErrors:    make(map[string]fakeAdminError),
+		settings:          make(map[string]*groupssettings.Groups),
+		settingsEtags:     make(map[string]string),
+		settingsPutBodies: make(map[string]map[string]json.RawMessage),
 	}
 	f.server = httptest.NewServer(http.HandlerFunc(f.serveHTTP))
 	t.Cleanup(f.close)
@@ -109,6 +112,17 @@ func (f *fakeAdmin) requestLog() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.requests...)
+}
+
+func (f *fakeAdmin) settingsPutBody(email string) map[string]json.RawMessage {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	body := make(map[string]json.RawMessage, len(f.settingsPutBodies[email]))
+	for key, value := range f.settingsPutBodies[email] {
+		body[key] = append(json.RawMessage(nil), value...)
+	}
+	return body
 }
 
 func (f *fakeAdmin) serveHTTP(w http.ResponseWriter, r *http.Request) {
@@ -308,12 +322,26 @@ func (f *fakeAdmin) serveSettings(w http.ResponseWriter, r *http.Request, email 
 		f.writeError(w, apiError.code, apiError.reason, apiError.message)
 		return
 	}
-
-	var update groupssettings.Groups
-	if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
 		f.writeError(w, http.StatusBadRequest, "invalid", "invalid settings body")
 		return
 	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		f.writeError(w, http.StatusBadRequest, "invalid", "invalid settings body")
+		return
+	}
+	if len(fields) == 0 {
+		f.writeError(w, http.StatusBadRequest, "required", "Required, required")
+		return
+	}
+	var update groupssettings.Groups
+	if err := json.Unmarshal(body, &update); err != nil {
+		f.writeError(w, http.StatusBadRequest, "invalid", "invalid settings body")
+		return
+	}
+	f.settingsPutBodies[email] = fields
 	settings := f.settings[email]
 	if settings == nil {
 		settings = fakeAdminDefaultSettings(email)
