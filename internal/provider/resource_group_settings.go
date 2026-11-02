@@ -702,8 +702,11 @@ func resourceGroupSettingsUpdate(ctx context.Context, d *schema.ResourceData, me
 
 	var groupSettings *groupssettings.Groups
 	if d.HasChange("email") {
-		// The renamed group's API rejects an empty partial-update body.
+		// The renamed group's API rejects an empty partial-update body. Name and
+		// description belong to googleworkspace_group; settings state may hold stale copies.
 		groupSettingsObj = groupSettingsFromResourceData(d)
+		groupSettingsObj.Name = ""
+		groupSettingsObj.Description = ""
 		err := retryTimeDuration(ctx, d.Timeout(schema.TimeoutUpdate), func() error {
 			var retryErr error
 			groupSettings, retryErr = groupsService.Update(email, &groupSettingsObj).Do()

@@ -27,7 +27,7 @@ func TestResourceGroupSettingsUpdate_EmailPropagation(t *testing.T) {
 }
 
 func TestResourceGroupSettingsUpdate_EmailOnlyRename(t *testing.T) {
-	_, _, requests, diags := applyGroupSettingsUpdate(t, true, 0, "2s", false)
+	fake, _, requests, diags := applyGroupSettingsUpdate(t, true, 0, "2s", false)
 	if diags.HasError() {
 		t.Fatalf("Apply failed: %v; requests: %v", diags, requests)
 	}
@@ -36,6 +36,12 @@ func TestResourceGroupSettingsUpdate_EmailOnlyRename(t *testing.T) {
 	}
 	if got := fakeAdminCountRequests(requests, "PUT /groups/v1/groups/"+groupNewEmail); got != 1 {
 		t.Fatalf("settings PUT to new email count = %d, want 1; requests: %v", got, requests)
+	}
+	body := fake.settingsPutBody(groupNewEmail)
+	for _, key := range []string{"name", "description"} {
+		if _, ok := body[key]; ok {
+			t.Errorf("settings PUT body contains %q; body keys: %v", key, body)
+		}
 	}
 }
 
@@ -115,7 +121,11 @@ func applyGroupSettingsUpdateWithFake(
 	}
 	client := newFakeAdminClient(t, fake)
 	resource := resourceGroupSettings()
-	stateData := schema.TestResourceDataRaw(t, resource.Schema, map[string]interface{}{"email": seedEmail})
+	stateData := schema.TestResourceDataRaw(t, resource.Schema, map[string]interface{}{
+		"email":       seedEmail,
+		"name":        "Existing group name",
+		"description": "Existing group description",
+	})
 	stateData.SetId(seedEmail)
 	state := stateData.State()
 	config := map[string]interface{}{
