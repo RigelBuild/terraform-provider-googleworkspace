@@ -3,6 +3,7 @@ package googleworkspace
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -308,9 +309,22 @@ func (f *fakeAdmin) serveSettings(w http.ResponseWriter, r *http.Request, email 
 		f.writeError(w, apiError.code, apiError.reason, apiError.message)
 		return
 	}
-
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		f.writeError(w, http.StatusBadRequest, "invalid", "invalid settings body")
+		return
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		f.writeError(w, http.StatusBadRequest, "invalid", "invalid settings body")
+		return
+	}
+	if len(fields) == 0 {
+		f.writeError(w, http.StatusBadRequest, "required", "Required, required")
+		return
+	}
 	var update groupssettings.Groups
-	if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+	if err := json.Unmarshal(body, &update); err != nil {
 		f.writeError(w, http.StatusBadRequest, "invalid", "invalid settings body")
 		return
 	}

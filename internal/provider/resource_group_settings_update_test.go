@@ -14,7 +14,7 @@ import (
 )
 
 func TestResourceGroupSettingsUpdate_EmailPropagation(t *testing.T) {
-	_, result, requests, diags := applyGroupSettingsUpdate(t, true, 2, "10s")
+	_, result, requests, diags := applyGroupSettingsUpdate(t, true, 2, "10s", true)
 	if diags.HasError() {
 		t.Fatalf("Apply failed: %v; requests: %v", diags, requests)
 	}
@@ -26,11 +26,24 @@ func TestResourceGroupSettingsUpdate_EmailPropagation(t *testing.T) {
 	}
 }
 
+func TestResourceGroupSettingsUpdate_EmailOnlyRename(t *testing.T) {
+	_, _, requests, diags := applyGroupSettingsUpdate(t, true, 0, "2s", false)
+	if diags.HasError() {
+		t.Fatalf("Apply failed: %v; requests: %v", diags, requests)
+	}
+	if got := fakeAdminCountRequests(requests, "PUT /groups/v1/groups/"); got != 1 {
+		t.Fatalf("settings PUTs = %d, want 1; requests: %v", got, requests)
+	}
+	if got := fakeAdminCountRequests(requests, "PUT /groups/v1/groups/"+groupNewEmail); got != 1 {
+		t.Fatalf("settings PUT to new email count = %d, want 1; requests: %v", got, requests)
+	}
+}
+
 func TestResourceGroupSettingsUpdate_OtherErrorFailsFast(t *testing.T) {
 	fake := newFakeAdmin(t)
 	fake.seedGroup(&directory.Group{Id: groupID, Email: groupOldEmail})
 	fake.setSettingsError(groupNewEmail, 400, "invalid", "Invalid Input", 10)
-	_, requests, diags := applyGroupSettingsUpdateWithFake(t, fake, true, "5s")
+	_, requests, diags := applyGroupSettingsUpdateWithFake(t, fake, true, "5s", true)
 	if !diags.HasError() {
 		t.Fatal("Apply succeeded after a non-propagation error")
 	}
@@ -43,7 +56,7 @@ func TestResourceGroupSettingsUpdate_RequiredWithoutEmailChangeFailsFast(t *test
 	fake := newFakeAdmin(t)
 	fake.seedGroup(&directory.Group{Id: groupID, Email: groupNewEmail})
 	fake.setSettingsError(groupNewEmail, 400, "required", "Required, required", 10)
-	_, requests, diags := applyGroupSettingsUpdateWithFake(t, fake, false, "5s")
+	_, requests, diags := applyGroupSettingsUpdateWithFake(t, fake, false, "5s", true)
 	if !diags.HasError() {
 		t.Fatal("Apply succeeded after a required error without an email change")
 	}
@@ -53,7 +66,7 @@ func TestResourceGroupSettingsUpdate_RequiredWithoutEmailChangeFailsFast(t *test
 }
 
 func TestResourceGroupSettingsUpdate_PropagationTimeoutFailsLoud(t *testing.T) {
-	_, _, requests, diags := applyGroupSettingsUpdate(t, true, 1_000_000, "500ms")
+	_, _, requests, diags := applyGroupSettingsUpdate(t, true, 1_000_000, "500ms", true)
 	if !diags.HasError() {
 		t.Fatal("Apply succeeded before propagation timeout")
 	}
@@ -70,6 +83,7 @@ func applyGroupSettingsUpdate(
 	emailChange bool,
 	propagationFailures int,
 	updateTimeout string,
+	changeWhoCanJoin bool,
 ) (*fakeAdmin, *terraform.InstanceState, []string, diag.Diagnostics) {
 	t.Helper()
 	previousInterval := retryPollInterval
@@ -82,7 +96,7 @@ func applyGroupSettingsUpdate(
 	}
 	fake.seedGroup(&directory.Group{Id: groupID, Email: seedEmail})
 	fake.settingsFailuresAfterRename = propagationFailures
-	state, requests, diags := applyGroupSettingsUpdateWithFake(t, fake, emailChange, updateTimeout)
+	state, requests, diags := applyGroupSettingsUpdateWithFake(t, fake, emailChange, updateTimeout, changeWhoCanJoin)
 	return fake, state, requests, diags
 }
 
@@ -91,6 +105,7 @@ func applyGroupSettingsUpdateWithFake(
 	fake *fakeAdmin,
 	emailChange bool,
 	updateTimeout string,
+	changeWhoCanJoin bool,
 ) (*terraform.InstanceState, []string, diag.Diagnostics) {
 	t.Helper()
 	seedEmail := groupNewEmail
@@ -104,13 +119,14 @@ func applyGroupSettingsUpdateWithFake(
 	stateData.SetId(seedEmail)
 	state := stateData.State()
 	config := map[string]interface{}{
-		"email":        groupNewEmail,
-		"who_can_join": "ALL_IN_DOMAIN_CAN_JOIN",
-		"timeouts":     map[string]interface{}{"update": updateTimeout},
+		"email":    groupNewEmail,
+		"timeouts": map[string]interface{}{"update": updateTimeout},
+	}
+	if changeWhoCanJoin {
+		config["who_can_join"] = "ALL_IN_DOMAIN_CAN_JOIN"
 	}
 	if !emailChange {
 		config["email"] = seedEmail
-		config["who_can_join"] = "ALL_IN_DOMAIN_CAN_JOIN"
 	}
 	diff, err := resource.Diff(context.Background(), state, terraform.NewResourceConfigRaw(config), client)
 	if err != nil {

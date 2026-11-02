@@ -371,42 +371,7 @@ func resourceGroupSettingsCreate(ctx context.Context, d *schema.ResourceData, me
 		return diags
 	}
 
-	groupSettingsObj := groupssettings.Groups{
-		Email:                                   email,
-		Name:                                    d.Get("name").(string),
-		Description:                             d.Get("description").(string),
-		WhoCanJoin:                              d.Get("who_can_join").(string),
-		WhoCanViewMembership:                    d.Get("who_can_view_membership").(string),
-		WhoCanViewGroup:                         d.Get("who_can_view_group").(string),
-		AllowExternalMembers:                    strconv.FormatBool(d.Get("allow_external_members").(bool)),
-		WhoCanPostMessage:                       d.Get("who_can_post_message").(string),
-		AllowWebPosting:                         strconv.FormatBool(d.Get("allow_web_posting").(bool)),
-		PrimaryLanguage:                         d.Get("primary_language").(string),
-		IsArchived:                              strconv.FormatBool(d.Get("is_archived").(bool)),
-		ArchiveOnly:                             strconv.FormatBool(d.Get("archive_only").(bool)),
-		MessageModerationLevel:                  d.Get("message_moderation_level").(string),
-		SpamModerationLevel:                     d.Get("spam_moderation_level").(string),
-		ReplyTo:                                 d.Get("reply_to").(string),
-		CustomReplyTo:                           d.Get("custom_reply_to").(string),
-		IncludeCustomFooter:                     strconv.FormatBool(d.Get("include_custom_footer").(bool)),
-		CustomFooterText:                        d.Get("custom_footer_text").(string),
-		SendMessageDenyNotification:             strconv.FormatBool(d.Get("send_message_deny_notification").(bool)),
-		DefaultMessageDenyNotificationText:      d.Get("default_message_deny_notification_text").(string),
-		MembersCanPostAsTheGroup:                strconv.FormatBool(d.Get("members_can_post_as_the_group").(bool)),
-		IncludeInGlobalAddressList:              strconv.FormatBool(d.Get("include_in_global_address_list").(bool)),
-		WhoCanLeaveGroup:                        d.Get("who_can_leave_group").(string),
-		WhoCanContactOwner:                      d.Get("who_can_contact_owner").(string),
-		WhoCanModerateMembers:                   d.Get("who_can_moderate_members").(string),
-		WhoCanModerateContent:                   d.Get("who_can_moderate_content").(string),
-		WhoCanAssistContent:                     d.Get("who_can_assist_content").(string),
-		CustomRolesEnabledForSettingsToBeMerged: strconv.FormatBool(d.Get("custom_roles_enabled_for_settings_to_be_merged").(bool)),
-		EnableCollaborativeInbox:                strconv.FormatBool(d.Get("enable_collaborative_inbox").(bool)),
-		WhoCanDiscoverGroup:                     d.Get("who_can_discover_group").(string),
-
-		ForceSendFields: []string{"AllowExternalMembers", "AllowWebPosting", "IsArchived", "ArchiveOnly",
-			"IncludeCustomFooter", "SendMessageDenyNotification", "MembersCanPostAsTheGroup", "IncludeInGlobalAddressList",
-			"CustomRolesEnabledForSettingsToBeMerged", "EnableCollaborativeInbox"},
-	}
+	groupSettingsObj := groupSettingsFromResourceData(d)
 
 	groupSettings, err := groupsService.Update(email, &groupSettingsObj).Do()
 	if err != nil {
@@ -447,6 +412,44 @@ func resourceGroupSettingsCreate(ctx context.Context, d *schema.ResourceData, me
 	log.Printf("[DEBUG] Finished creating Group Settings %q: %#v", d.Id(), email)
 
 	return resourceGroupSettingsRead(ctx, d, meta)
+}
+
+func groupSettingsFromResourceData(d *schema.ResourceData) groupssettings.Groups {
+	return groupssettings.Groups{
+		Email:                                   d.Get("email").(string),
+		Name:                                    d.Get("name").(string),
+		Description:                             d.Get("description").(string),
+		WhoCanJoin:                              d.Get("who_can_join").(string),
+		WhoCanViewMembership:                    d.Get("who_can_view_membership").(string),
+		WhoCanViewGroup:                         d.Get("who_can_view_group").(string),
+		AllowExternalMembers:                    strconv.FormatBool(d.Get("allow_external_members").(bool)),
+		WhoCanPostMessage:                       d.Get("who_can_post_message").(string),
+		AllowWebPosting:                         strconv.FormatBool(d.Get("allow_web_posting").(bool)),
+		PrimaryLanguage:                         d.Get("primary_language").(string),
+		IsArchived:                              strconv.FormatBool(d.Get("is_archived").(bool)),
+		ArchiveOnly:                             strconv.FormatBool(d.Get("archive_only").(bool)),
+		MessageModerationLevel:                  d.Get("message_moderation_level").(string),
+		SpamModerationLevel:                     d.Get("spam_moderation_level").(string),
+		ReplyTo:                                 d.Get("reply_to").(string),
+		CustomReplyTo:                           d.Get("custom_reply_to").(string),
+		IncludeCustomFooter:                     strconv.FormatBool(d.Get("include_custom_footer").(bool)),
+		CustomFooterText:                        d.Get("custom_footer_text").(string),
+		SendMessageDenyNotification:             strconv.FormatBool(d.Get("send_message_deny_notification").(bool)),
+		DefaultMessageDenyNotificationText:      d.Get("default_message_deny_notification_text").(string),
+		MembersCanPostAsTheGroup:                strconv.FormatBool(d.Get("members_can_post_as_the_group").(bool)),
+		IncludeInGlobalAddressList:              strconv.FormatBool(d.Get("include_in_global_address_list").(bool)),
+		WhoCanLeaveGroup:                        d.Get("who_can_leave_group").(string),
+		WhoCanContactOwner:                      d.Get("who_can_contact_owner").(string),
+		WhoCanModerateMembers:                   d.Get("who_can_moderate_members").(string),
+		WhoCanModerateContent:                   d.Get("who_can_moderate_content").(string),
+		WhoCanAssistContent:                     d.Get("who_can_assist_content").(string),
+		CustomRolesEnabledForSettingsToBeMerged: strconv.FormatBool(d.Get("custom_roles_enabled_for_settings_to_be_merged").(bool)),
+		EnableCollaborativeInbox:                strconv.FormatBool(d.Get("enable_collaborative_inbox").(bool)),
+		WhoCanDiscoverGroup:                     d.Get("who_can_discover_group").(string),
+		ForceSendFields: []string{"AllowExternalMembers", "AllowWebPosting", "IsArchived", "ArchiveOnly",
+			"IncludeCustomFooter", "SendMessageDenyNotification", "MembersCanPostAsTheGroup", "IncludeInGlobalAddressList",
+			"CustomRolesEnabledForSettingsToBeMerged", "EnableCollaborativeInbox"},
+	}
 }
 
 func resourceGroupSettingsRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
@@ -699,6 +702,8 @@ func resourceGroupSettingsUpdate(ctx context.Context, d *schema.ResourceData, me
 
 	var groupSettings *groupssettings.Groups
 	if d.HasChange("email") {
+		// The renamed group's API rejects an empty partial-update body.
+		groupSettingsObj = groupSettingsFromResourceData(d)
 		err := retryTimeDuration(ctx, d.Timeout(schema.TimeoutUpdate), func() error {
 			var retryErr error
 			groupSettings, retryErr = groupsService.Update(email, &groupSettingsObj).Do()
