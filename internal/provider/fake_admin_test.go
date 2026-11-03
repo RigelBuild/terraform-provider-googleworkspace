@@ -74,8 +74,15 @@ func (f *fakeAdmin) seedGroup(group *directory.Group) {
 	defer f.mu.Unlock()
 
 	copy := *group
+	copy.Email = strings.ToLower(copy.Email)
 	copy.Aliases = append([]string(nil), group.Aliases...)
+	for i, alias := range copy.Aliases {
+		copy.Aliases[i] = strings.ToLower(alias)
+	}
 	copy.NonEditableAliases = append([]string(nil), group.NonEditableAliases...)
+	for i, alias := range copy.NonEditableAliases {
+		copy.NonEditableAliases[i] = strings.ToLower(alias)
+	}
 	if copy.Etag == "" {
 		copy.Etag = "etag-1"
 	}
@@ -92,6 +99,7 @@ func (f *fakeAdmin) renameGroup(oldEmail, newEmail string) {
 	if group == nil {
 		return
 	}
+	newEmail = strings.ToLower(newEmail)
 	group.group.Email = newEmail
 	group.group.Etag = f.nextEtag(group.group.Etag)
 	f.settings[newEmail] = fakeAdminDefaultSettings(newEmail)
@@ -193,7 +201,7 @@ func (f *fakeAdmin) serveGroupGet(w http.ResponseWriter, r *http.Request, group 
 				group.group.Aliases = append(group.group.Aliases, alias)
 			} else {
 				for i, current := range group.group.Aliases {
-					if current == alias {
+					if strings.EqualFold(current, alias) {
 						group.group.Aliases = append(group.group.Aliases[:i], group.group.Aliases[i+1:]...)
 						break
 					}
@@ -220,12 +228,13 @@ func (f *fakeAdmin) serveGroupPatch(w http.ResponseWriter, r *http.Request, grou
 	}
 
 	oldEmail := group.group.Email
-	if update.Email != "" && update.Email != oldEmail {
-		if stringInSlice(group.group.Aliases, update.Email) || stringInSlice(group.group.NonEditableAliases, update.Email) {
+	if update.Email != "" && !strings.EqualFold(update.Email, oldEmail) {
+		if fakeAdminAddressInSlice(group.group.Aliases, update.Email) ||
+			fakeAdminAddressInSlice(group.group.NonEditableAliases, update.Email) {
 			f.writeError(w, http.StatusBadRequest, "invalid", "Invalid Input: email is held as an alias")
 			return
 		}
-		group.group.Email = update.Email
+		group.group.Email = strings.ToLower(update.Email)
 		if f.autoAliasAfterReads == 0 {
 			group.group.Aliases = append(group.group.Aliases, oldEmail)
 		} else if f.autoAliasAfterReads > 0 {
@@ -246,7 +255,7 @@ func (f *fakeAdmin) serveGroupPatch(w http.ResponseWriter, r *http.Request, grou
 
 func (f *fakeAdmin) serveAliasDelete(w http.ResponseWriter, group *fakeAdminGroup, alias string) {
 	for i, current := range group.group.Aliases {
-		if current == alias {
+		if strings.EqualFold(current, alias) {
 			group.group.Aliases = append(group.group.Aliases[:i], group.group.Aliases[i+1:]...)
 			group.group.Etag = f.nextEtag(group.group.Etag)
 			w.WriteHeader(http.StatusNoContent)
@@ -262,10 +271,11 @@ func (f *fakeAdmin) serveAliasInsert(w http.ResponseWriter, r *http.Request, gro
 		f.writeError(w, http.StatusBadRequest, "invalid", "invalid alias body")
 		return
 	}
+	alias.Alias = strings.ToLower(alias.Alias)
 	pending := group.pendingAliasWrites[alias.Alias]
-	isPrimary := alias.Alias == group.group.Email
-	isHeld := stringInSlice(group.group.Aliases, alias.Alias) ||
-		stringInSlice(group.group.NonEditableAliases, alias.Alias)
+	isPrimary := strings.EqualFold(alias.Alias, group.group.Email)
+	isHeld := fakeAdminAddressInSlice(group.group.Aliases, alias.Alias) ||
+		fakeAdminAddressInSlice(group.group.NonEditableAliases, alias.Alias)
 	isPending := pending != nil && pending.present
 	if isPrimary || isHeld || isPending {
 		f.writeError(w, http.StatusConflict, "duplicate", "duplicate alias")
@@ -379,12 +389,21 @@ func (f *fakeAdmin) findGroupLocked(key string) *fakeAdminGroup {
 		return group
 	}
 	for _, group := range f.groups {
-		if group.group.Email == key || stringInSlice(group.group.Aliases, key) ||
-			stringInSlice(group.group.NonEditableAliases, key) {
+		if strings.EqualFold(group.group.Email, key) || fakeAdminAddressInSlice(group.group.Aliases, key) ||
+			fakeAdminAddressInSlice(group.group.NonEditableAliases, key) {
 			return group
 		}
 	}
 	return nil
+}
+
+func fakeAdminAddressInSlice(addresses []string, address string) bool {
+	for _, candidate := range addresses {
+		if strings.EqualFold(candidate, address) {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *fakeAdmin) nextEtag(etag string) string {

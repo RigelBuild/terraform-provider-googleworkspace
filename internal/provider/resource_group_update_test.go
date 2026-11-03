@@ -93,6 +93,38 @@ func TestResourceGroupUpdate_PromoteOwnAlias(t *testing.T) {
 	}
 }
 
+func TestResourceGroupUpdate_MixedCaseAddresses(t *testing.T) {
+	currentEmail := "group@example.com"
+	oldAlias := "Old-Alias@example.com"
+	keptAlias := "Kept-Alias@example.com"
+	newAlias := "New-Alias@example.com"
+	fake := newFakeAdmin(t)
+	fake.seedGroup(&directory.Group{
+		Id:      groupID,
+		Email:   currentEmail,
+		Aliases: []string{strings.ToLower(oldAlias), strings.ToLower(keptAlias)},
+	})
+	_, result, requests, diags := applyGroupUpdateWithFake(t, fake, groupUpdateInput{
+		oldEmail:     currentEmail,
+		stateAliases: []string{strings.ToLower(oldAlias), strings.ToLower(keptAlias)},
+		config: map[string]interface{}{
+			"email": oldAlias, "aliases": []interface{}{keptAlias, newAlias},
+		},
+		timeout: "100ms",
+	})
+	if diags.HasError() {
+		t.Fatalf("Apply failed: %v; requests: %v", diags, requests)
+	}
+	if result == nil {
+		t.Fatal("Apply returned no state")
+	}
+	wantAliases := []string{strings.ToLower(keptAlias), strings.ToLower(newAlias)}
+	if got := groupAliases(t, result); len(got) != len(wantAliases) ||
+		!stringInSlice(got, wantAliases[0]) || !stringInSlice(got, wantAliases[1]) {
+		t.Fatalf("aliases = %v, want %v", got, wantAliases)
+	}
+}
+
 func TestResourceGroupUpdate_AutoAliasNeverAppears(t *testing.T) {
 	_, _, _, diags := applyGroupUpdate(t, directory.Group{
 		Id: groupID, Email: groupOldEmail,

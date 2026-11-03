@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
@@ -300,15 +301,15 @@ func resourceGroupUpdate(ctx context.Context, d *schema.ResourceData, meta inter
 			return diag.FromErr(err)
 		}
 		// Validate before any write so a rejected update leaves the group unchanged.
-		if emailChanged && stringInSlice(live.NonEditableAliases, email) {
+		if emailChanged && addressInSlice(live.NonEditableAliases, email) {
 			return diag.Errorf("cannot promote non-editable group alias %q to primary email", email)
 		}
 		for _, alias := range newAliases {
-			if stringInSlice(live.NonEditableAliases, alias) {
+			if addressInSlice(live.NonEditableAliases, alias) {
 				return diag.Errorf("aliases cannot manage non-editable group alias %q", alias)
 			}
 		}
-		if emailChanged && stringInSlice(live.Aliases, email) {
+		if emailChanged && addressInSlice(live.Aliases, email) {
 			if err := aliasesService.Delete(d.Id(), email).Do(); err != nil {
 				return diag.FromErr(err)
 			}
@@ -354,16 +355,16 @@ func resourceGroupUpdate(ctx context.Context, d *schema.ResourceData, meta inter
 		}
 		declared := make(map[string]struct{}, len(newAliases))
 		for _, alias := range newAliases {
-			declared[alias] = struct{}{}
+			declared[strings.ToLower(alias)] = struct{}{}
 		}
 		toDelete = make([]string, 0, len(oldAliases)+1)
 		for _, alias := range oldAliases {
-			if _, ok := declared[alias]; !ok && stringInSlice(live.Aliases, alias) {
+			if _, ok := declared[strings.ToLower(alias)]; !ok && addressInSlice(live.Aliases, alias) {
 				toDelete = append(toDelete, alias)
 			}
 		}
 		if emailChanged {
-			if _, ok := declared[oldEmail]; !ok && stringInSlice(live.Aliases, oldEmail) {
+			if _, ok := declared[strings.ToLower(oldEmail)]; !ok && addressInSlice(live.Aliases, oldEmail) {
 				toDelete = append(toDelete, oldEmail)
 			}
 		}
@@ -373,7 +374,7 @@ func resourceGroupUpdate(ctx context.Context, d *schema.ResourceData, meta inter
 			}
 		}
 		for _, alias := range newAliases {
-			if !stringInSlice(live.Aliases, alias) && alias != oldEmail {
+			if !addressInSlice(live.Aliases, alias) && !strings.EqualFold(alias, oldEmail) {
 				aliasObj := directory.Alias{Alias: alias}
 				if _, err := aliasesService.Insert(d.Id(), &aliasObj).Do(); err != nil {
 					return diag.FromErr(err)
@@ -399,6 +400,15 @@ func groupAddresses(group *directory.Group) []string {
 	addresses = append(addresses, group.Aliases...)
 	addresses = append(addresses, group.NonEditableAliases...)
 	return addresses
+}
+
+func addressInSlice(addresses []string, address string) bool {
+	for _, candidate := range addresses {
+		if strings.EqualFold(candidate, address) {
+			return true
+		}
+	}
+	return false
 }
 
 type groupAddressExpectation struct {
@@ -446,7 +456,7 @@ func waitForGroupAddresses(
 func missingAddresses(addresses, present []string) []string {
 	var missing []string
 	for _, address := range present {
-		if !stringInSlice(addresses, address) {
+		if !addressInSlice(addresses, address) {
 			missing = append(missing, address)
 		}
 	}
@@ -457,7 +467,7 @@ func missingAddresses(addresses, present []string) []string {
 func extraAddresses(addresses, absent []string) []string {
 	var extra []string
 	for _, address := range absent {
-		if stringInSlice(addresses, address) {
+		if addressInSlice(addresses, address) {
 			extra = append(extra, address)
 		}
 	}
