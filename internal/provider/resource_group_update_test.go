@@ -125,6 +125,35 @@ func TestResourceGroupUpdate_MixedCaseAddresses(t *testing.T) {
 	}
 }
 
+func TestResourceGroupUpdate_MixedCaseAliasRemoval(t *testing.T) {
+	droppedAlias := "Dropped-Alias@example.com"
+	keptAlias := "kept-alias@example.com"
+	fake := newFakeAdmin(t)
+	fake.seedGroup(&directory.Group{
+		Id:      groupID,
+		Email:   groupOldEmail,
+		Aliases: []string{strings.ToLower(droppedAlias), keptAlias},
+	})
+	// State keeps the config spelling; the API holds it lowercase.
+	_, result, requests, diags := applyGroupUpdateWithFake(t, fake, groupUpdateInput{
+		oldEmail:     groupOldEmail,
+		stateAliases: []string{droppedAlias, keptAlias},
+		config: map[string]interface{}{
+			"email": groupOldEmail, "aliases": []interface{}{keptAlias},
+		},
+		timeout: "100ms",
+	})
+	if diags.HasError() {
+		t.Fatalf("Apply failed: %v; requests: %v", diags, requests)
+	}
+	if result == nil {
+		t.Fatal("Apply returned no state")
+	}
+	if got := groupAliases(t, result); len(got) != 1 || got[0] != keptAlias {
+		t.Fatalf("aliases = %v, want [%s]", got, keptAlias)
+	}
+}
+
 func TestResourceGroupUpdate_AutoAliasNeverAppears(t *testing.T) {
 	_, _, _, diags := applyGroupUpdate(t, directory.Group{
 		Id: groupID, Email: groupOldEmail,
